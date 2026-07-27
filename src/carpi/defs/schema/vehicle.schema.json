@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/buede/car-pi/schema/vehicle.schema.json",
+  "title": "car-pi vehicle definition",
+  "description": "Manufacturer-specific reads for one platform. Everything here is UDS ReadDataByIdentifier, which is read-only; there is no way to express a write in this schema, deliberately.",
+  "type": "object",
+  "required": ["meta", "ecus"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["id", "make", "platform", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "make": { "type": "string" },
+        "platform": { "type": "string" },
+        "years": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "source": { "type": "string" },
+        "note": { "type": "string" },
+        "fictional": {
+          "description": "True for fixtures that describe a simulated vehicle rather than a real one. Such a profile is never matched against a real car.",
+          "type": "boolean"
+        }
+      }
+    },
+    "match": {
+      "description": "How this profile is selected for a vehicle. Omit for a profile that is only ever chosen explicitly.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vin_prefix": {
+          "description": "Match if the vehicle's VIN starts with any of these. The World Manufacturer Identifier is the first three characters.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 17 },
+          "minItems": 1
+        }
+      }
+    },
+    "ecus": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/ecu" }
+    }
+  },
+  "$defs": {
+    "confidence": {
+      "description": "'verified' requires confirmation against a real vehicle whose behaviour was independently known -- not merely that a plausible number came back.",
+      "enum": ["community", "verified", "official"]
+    },
+    "ecu": {
+      "type": "object",
+      "required": ["name", "request_id", "response_id", "reads"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "request_id": {
+          "description": "Arbitration ID to send to. 11-bit unless `extended` is set.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 536870911
+        },
+        "response_id": { "type": "integer", "minimum": 0, "maximum": 536870911 },
+        "extended": { "type": "boolean" },
+        "session": {
+          "description": "Diagnostic session to request first. Programming sessions cannot be expressed; only these two are permitted.",
+          "enum": ["default", "extended"]
+        },
+        "safety_critical": {
+          "description": "Marks a module whose misconfiguration is dangerous -- airbag, ABS, steering, immobiliser. Reads are always safe, so this is advisory here; it exists so that any future write path has an unambiguous flag to refuse on.",
+          "type": "boolean"
+        },
+        "reads": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/read" }
+        }
+      }
+    },
+    "read": {
+      "type": "object",
+      "required": ["id", "did", "decode"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Fact name. Reads sharing an id across ECUs are compared against each other -- which is how the cross-module odometer check works.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "label": { "type": "string" },
+        "did": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "unit": { "type": "string" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "verified_on": {
+          "description": "Vehicles this read was actually confirmed against.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "note": { "type": "string" },
+        "decode": { "$ref": "#/$defs/decode" }
+      }
+    },
+    "decode": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "uint/int are big-endian; ascii and bcd are read as text and digits.",
+          "enum": ["uint", "int", "ascii", "bcd", "raw"]
+        },
+        "offset": {
+          "description": "Byte offset into the payload. Manufacturer identifiers frequently pack several values together.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "length": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "scale": { "type": "number" },
+        "add": {
+          "description": "Added after scaling, for encodings offset from zero.",
+          "type": "number"
+        },
+        "range": {
+          "description": "Physically plausible [min, max]. A value outside it is reported as suspect rather than as fact, which matters a great deal for an unverified definition.",
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    }
+  }
+}

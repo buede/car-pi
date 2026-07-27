@@ -76,7 +76,15 @@ class TestBundledDatabase:
         A rule referencing `pid.ltft_bank_1` instead of `pid.ltft_bank1` is skipped as
         inapplicable on every vehicle forever, and nothing else would notice.
         """
-        known_namespaces = ("status.", "readiness.", "dtc.", "vehicle.", "mode06.")
+        known_namespaces = (
+            "status.",
+            "readiness.",
+            "dtc.",
+            "vehicle.",
+            "mode06.",
+            "uds.",
+            "profile.",
+        )
         for rule in database.rules:
             for fact in rule.required_facts:
                 if fact.startswith("pid."):

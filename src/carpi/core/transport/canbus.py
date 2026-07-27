@@ -19,6 +19,8 @@ so swapping a simulator for a real car changes one command-line flag.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import TracebackType
 from typing import Any
 
@@ -248,6 +250,49 @@ class CanLink:
         finally:
             self._notifier.remove_listener(reader)
             reader.stop()
+
+    @contextmanager
+    def raw_reader(self) -> Iterator[can.BufferedReader]:
+        """Observe every frame on the bus, without transmitting anything.
+
+        Used by address discovery, which has to watch for a reply on an arbitration ID
+        it does not know in advance, and by passive traffic mapping -- which is the
+        safest possible first contact with an unfamiliar vehicle, since it sends nothing.
+        """
+        self._check_open()
+        reader = can.BufferedReader()
+        self._notifier.add_listener(reader)
+        try:
+            yield reader
+        finally:
+            self._notifier.remove_listener(reader)
+            reader.stop()
+
+    def send_raw(self, arbitration_id: int, data: bytes) -> None:
+        """Send a single unsegmented frame.
+
+        Deliberately low-level: address discovery needs to probe an ID before it knows
+        whether anything is there, and an ISO-TP stack per candidate address would cost
+        far more than the one frame it takes to find out.
+        """
+        self._check_open()
+        payload = bytes(data)
+        if len(payload) > 8:
+            raise TransportError(
+                f"{len(payload)} bytes will not fit one frame; use a channel for "
+                f"anything that needs segmenting"
+            )
+        # Padded to a full 8 bytes: a good number of ECUs quietly ignore short frames.
+        frame = can.Message(
+            arbitration_id=arbitration_id,
+            data=payload.ljust(8, b"\x00"),
+            is_extended_id=self._extended,
+            is_fd=self._fd,
+        )
+        try:
+            self._bus.send(frame)
+        except can.CanError as exc:
+            raise TransportError(f"could not send to 0x{arbitration_id:X}: {exc}") from exc
 
     def _check_open(self) -> None:
         if self._closed:

@@ -75,6 +75,10 @@ def run_scenario(
         if cached is not None:
             return cached
 
+        # A scenario that names a vehicle profile is exercising the manufacturer-specific
+        # path, and without the profile its expected findings cannot fire at all.
+        profile = database.profile(scenario.profile) if scenario.profile else None
+
         channel = f"carpi-test-{next(_channels)}"
         vehicle = SimulatedVehicle.from_scenario(scenario, channel=channel)
         with vehicle, CanLink.open("virtual", channel) as link:
@@ -82,6 +86,7 @@ def run_scenario(
                 link,
                 database,
                 claimed_odometer_km=claimed,  # type: ignore[arg-type]
+                profile=profile,
                 # The simulator answers instantly, so the production one-second timeout
                 # would just be idle waiting. Kept non-zero so the no-answer path -- how
                 # an unsupported mode is detected -- is still exercised.

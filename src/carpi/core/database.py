@@ -23,6 +23,7 @@ import yaml
 
 from carpi.core.expr import Expression, ExpressionError, compile_expression
 from carpi.core.protocol.decoders import DECODERS
+from carpi.core.vehicles import DecodeSpec, EcuProfile, VehicleProfile, VehicleRead
 
 __all__ = [
     "SEVERITY_ORDER",
@@ -139,6 +140,7 @@ class Database:
     pids_by_number: dict[int, PidDef]
     pids_by_name: dict[str, PidDef]
     rules: tuple[Rule, ...]
+    vehicles: tuple[VehicleProfile, ...] = ()
 
     @classmethod
     def load(cls, root: Path | None = None) -> Database:
@@ -150,11 +152,13 @@ class Database:
 
         pids = _load_pids(base / "generic" / "mode01-pids.yaml", schema_dir)
         rules = _load_rules(base / "generic" / "rules", schema_dir)
+        vehicles = _load_vehicles(base / "vehicles", schema_dir)
         return cls(
             root=base,
             pids_by_number={p.pid: p for p in pids},
             pids_by_name={p.name: p for p in pids},
             rules=rules,
+            vehicles=vehicles,
         )
 
     def pid(self, key: int | str) -> PidDef:
@@ -169,6 +173,29 @@ class Database:
     def rules_by_severity(self) -> tuple[Rule, ...]:
         """Rules ordered worst-first, then by id for a stable presentation."""
         return tuple(sorted(self.rules, key=lambda r: (SEVERITY_ORDER[r.severity], r.id)))
+
+    def profile(self, profile_id: str) -> VehicleProfile:
+        """Look up a vehicle profile by id."""
+        for candidate in self.vehicles:
+            if candidate.id == profile_id:
+                return candidate
+        available = ", ".join(sorted(v.id for v in self.vehicles)) or "none"
+        raise DefinitionError(f"no vehicle profile {profile_id!r}. Available: {available}")
+
+    def profile_for_vin(self, vin: str | None) -> VehicleProfile | None:
+        """The profile matching *vin*, or ``None``.
+
+        Prefers the longest matching VIN prefix, so a platform-specific profile wins
+        over a make-wide one. Fictional profiles never match -- see
+        :meth:`VehicleProfile.matches_vin`.
+        """
+        candidates = [profile for profile in self.vehicles if profile.matches_vin(vin)]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda profile: max(len(prefix) for prefix in profile.vin_prefixes),
+        )
 
 
 def _load_pids(path: Path, schema_dir: Path) -> list[PidDef]:
@@ -291,6 +318,96 @@ def _load_rules(directory: Path, schema_dir: Path) -> tuple[Rule, ...]:
 
 def _yaml_files(directory: Path) -> Iterator[Path]:
     yield from sorted(directory.glob("*.yaml"))
+
+
+def _load_vehicles(directory: Path, schema_dir: Path) -> tuple[VehicleProfile, ...]:
+    """Load ``vehicles/<make>/<platform>.yaml``.
+
+    An absent or empty directory is not an error. The shipped set is nearly empty on
+    purpose -- manufacturer identifiers cannot be verified without the vehicle, and a
+    plausible-looking wrong one is worse than nothing at all.
+    """
+    if not directory.is_dir():
+        return ()
+
+    schema_path = schema_dir / "vehicle.schema.json"
+    profiles: list[VehicleProfile] = []
+    seen: dict[str, Path] = {}
+
+    for path in sorted(directory.glob("*/*.yaml")):
+        document = _load_yaml(path)
+        _validate(document, schema_path, path)
+        meta = document["meta"]
+        profile_id = meta["id"]
+        if profile_id in seen:
+            raise DefinitionError(
+                f"{path}: vehicle profile id {profile_id!r} already defined in {seen[profile_id]}"
+            )
+        seen[profile_id] = path
+
+        years = meta.get("years")
+        profiles.append(
+            VehicleProfile(
+                id=profile_id,
+                make=meta["make"],
+                platform=meta["platform"],
+                confidence=meta["confidence"],
+                vin_prefixes=tuple(document.get("match", {}).get("vin_prefix", ())),
+                years=(int(years[0]), int(years[1])) if years else None,
+                fictional=bool(meta.get("fictional", False)),
+                source=meta.get("source"),
+                note=meta.get("note"),
+                ecus=tuple(_load_ecu(entry, path, profile_id) for entry in document["ecus"]),
+            )
+        )
+    return tuple(profiles)
+
+
+def _load_ecu(entry: dict[str, Any], path: Path, profile_id: str) -> EcuProfile:
+    seen: set[str] = set()
+    reads: list[VehicleRead] = []
+
+    for item in entry["reads"]:
+        read_id = item["id"]
+        if read_id in seen:
+            raise DefinitionError(
+                f"{path}: {profile_id}/{entry['name']}: read id {read_id!r} defined twice"
+            )
+        seen.add(read_id)
+
+        spec = item["decode"]
+        value_range = spec.get("range")
+        reads.append(
+            VehicleRead(
+                id=read_id,
+                did=item["did"],
+                label=item.get("label"),
+                unit=item.get("unit"),
+                confidence=item.get("confidence", "community"),
+                verified_on=tuple(item.get("verified_on", ())),
+                note=item.get("note"),
+                decode=DecodeSpec(
+                    type=spec["type"],
+                    offset=spec.get("offset", 0),
+                    length=spec.get("length"),
+                    scale=float(spec.get("scale", 1.0)),
+                    add=float(spec.get("add", 0.0)),
+                    value_range=(float(value_range[0]), float(value_range[1]))
+                    if value_range
+                    else None,
+                ),
+            )
+        )
+
+    return EcuProfile(
+        name=entry["name"],
+        request_id=entry["request_id"],
+        response_id=entry["response_id"],
+        extended=bool(entry.get("extended", False)),
+        session=entry.get("session", "extended"),
+        safety_critical=bool(entry.get("safety_critical", False)),
+        reads=tuple(reads),
+    )
 
 
 @lru_cache(maxsize=1)
