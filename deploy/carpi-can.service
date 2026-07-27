@@ -1,0 +1,27 @@
+[Unit]
+Description=Bring up the car-pi CAN interface
+Documentation=https://github.com/buede/car-pi
+# The SPI device has to exist first, which it will not until the mcp251xfd driver has
+# probed the HAT.
+After=sys-subsystem-net-devices-can0.device
+BindsTo=sys-subsystem-net-devices-can0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Bitrate is a property of the vehicle's bus, not a preference. 500 kbit/s covers the
+# large majority of OBD-II vehicles; a few older ones use 250000. Edit here, or run
+# `carpi scan --bitrate 250000` after reconfiguring the link by hand.
+Environment=CARPI_CAN_INTERFACE=can0
+Environment=CARPI_CAN_BITRATE=500000
+
+# restart-ms=100 lets the controller recover on its own from a bus-off condition,
+# which a noisy or incorrectly terminated bus will provoke.
+ExecStart=/sbin/ip link set ${CARPI_CAN_INTERFACE} type can \
+    bitrate ${CARPI_CAN_BITRATE} restart-ms 100
+ExecStart=/sbin/ip link set up ${CARPI_CAN_INTERFACE}
+ExecStop=/sbin/ip link set down ${CARPI_CAN_INTERFACE}
+
+[Install]
+WantedBy=multi-user.target

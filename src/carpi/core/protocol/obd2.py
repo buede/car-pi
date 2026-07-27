@@ -179,6 +179,11 @@ class Obd2Client:
     def address(self) -> Any:
         return self._channel.address
 
+    @property
+    def database(self) -> Database:
+        """The definitions this client decodes with."""
+        return self._db
+
     # --- request plumbing ------------------------------------------------------
 
     def _exchange(self, request: bytes, *, retries: int = 1) -> bytes:

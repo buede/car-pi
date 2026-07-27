@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A 16-pin OBD-II (J1962) connector, trapezoid with two rows of eight.
+  Drawn on a 512 grid with the artwork inside the middle 80%, so a maskable
+  circular crop on Android does not clip it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img"
+     aria-label="car-pi">
+  <rect width="512" height="512" rx="96" fill="#101418"/>
+  <g transform="translate(256 264)">
+    <!-- Connector body: wider at the top, as the real keyed shell is. -->
+    <path d="M-150 -92 H150 L124 92 H-124 Z"
+          fill="none" stroke="#4f9ff0" stroke-width="22" stroke-linejoin="round"/>
+    <!-- Pin rows. Top row of 8, bottom row of 8. -->
+    <g fill="#4f9ff0">
+      <circle cx="-105" cy="-34" r="14"/>
+      <circle cx="-75" cy="-34" r="14"/>
+      <circle cx="-45" cy="-34" r="14"/>
+      <circle cx="-15" cy="-34" r="14"/>
+      <circle cx="15" cy="-34" r="14"/>
+      <circle cx="45" cy="-34" r="14"/>
+      <circle cx="75" cy="-34" r="14"/>
+      <circle cx="105" cy="-34" r="14"/>
+
+      <circle cx="-98" cy="38" r="14"/>
+      <circle cx="-70" cy="38" r="14"/>
+      <circle cx="-42" cy="38" r="14"/>
+      <circle cx="-14" cy="38" r="14"/>
+      <circle cx="14" cy="38" r="14"/>
+      <circle cx="42" cy="38" r="14"/>
+      <circle cx="70" cy="38" r="14"/>
+      <circle cx="98" cy="38" r="14"/>
+    </g>
+  </g>
+</svg>

@@ -13,6 +13,7 @@ multi-module car as tampered with.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -29,9 +30,19 @@ from carpi.core.rules import Evaluation, evaluate, flatten_facts
 from carpi.core.transport.base import EcuAddress, NoResponse, TransportError
 from carpi.core.transport.canbus import CanLink
 
-__all__ = ["EcuScan", "ScanResult", "build_facts", "scan_ecu", "scan_vehicle"]
+__all__ = [
+    "EcuScan",
+    "ProgressCallback",
+    "ScanResult",
+    "build_facts",
+    "scan_ecu",
+    "scan_vehicle",
+]
 
 log = logging.getLogger(__name__)
+
+# Called with a short human-readable description of what the scan is doing now.
+ProgressCallback = Callable[[str], None]
 
 # Conventional reply ID of the engine controller on an 11-bit bus. Preferred as the
 # primary module because it carries the readiness monitors and live data.
@@ -133,17 +144,28 @@ class ScanResult:
         return evaluate(database, build_facts(self))
 
 
-def scan_ecu(client: Obd2Client, *, read_freeze_frame: bool = True) -> EcuScan:
+def scan_ecu(
+    client: Obd2Client,
+    *,
+    read_freeze_frame: bool = True,
+    on_progress: ProgressCallback | None = None,
+) -> EcuScan:
     """Interrogate one ECU as thoroughly as it permits.
 
     Each step is independently guarded. A module that mishandles one mode -- and
     plenty do -- must not cost us everything else it was willing to tell us.
+
+    *on_progress* is called with a short description before each step. A full scan
+    takes tens of seconds on a real car, most of it waiting out timeouts for modes a
+    module does not implement, so a caller with a screen needs something to show.
     """
     scan = EcuScan(address=client.address)
     errors: list[str] = []
     unsupported: list[str] = []
 
     def attempt(label: str, action: Any) -> Any:
+        if on_progress is not None:
+            on_progress(f"{client.address}: reading {label}")
         try:
             return action()
         except NoResponse:
@@ -202,11 +224,17 @@ def scan_vehicle(
     claimed_odometer_km: float | None = None,
     timeout: float = 1.0,
     discovery_timeout: float = 1.0,
+    on_progress: ProgressCallback | None = None,
 ) -> ScanResult:
     """Discover every responding ECU and scan each in turn."""
     started = datetime.now(UTC).isoformat(timespec="seconds")
     notes: list[str] = []
 
+    def report(message: str) -> None:
+        if on_progress is not None:
+            on_progress(message)
+
+    report("looking for modules that answer")
     addresses = link.discover_ecus(timeout=discovery_timeout)
     if not addresses:
         notes.append(
@@ -215,12 +243,15 @@ def scan_vehicle(
             "matches the bus, and that CAN_H and CAN_L are not swapped."
         )
 
+    report(f"{len(addresses)} module(s) answered")
     scans: list[EcuScan] = []
-    for address in addresses:
+    for index, address in enumerate(addresses, start=1):
+        report(f"module {index} of {len(addresses)} ({address})")
         channel = link.channel(address)
         client = Obd2Client(channel, database, timeout=timeout)
-        scans.append(scan_ecu(client))
+        scans.append(scan_ecu(client, on_progress=on_progress))
 
+    report("evaluating findings")
     return ScanResult(
         started_at=started,
         finished_at=datetime.now(UTC).isoformat(timespec="seconds"),

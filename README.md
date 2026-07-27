@@ -8,8 +8,10 @@ codes shortly before you arrived to look at it.
 Built as an alternative to the proprietary tools (VCDS, BimmerCode, Carly, Autel),
 with the definition database open and community-editable.
 
-> **Status: pre-alpha.** The generic OBD-II read path and the virtual ECU simulator
-> are the current focus. Nothing here writes to a vehicle yet.
+> **Status: pre-alpha.** The generic OBD-II read path, the virtual ECU simulator and
+> the phone UI work. Nothing here writes to a vehicle. The Raspberry Pi deployment
+> scripts in `deploy/` have not yet been run on real hardware — see
+> [`deploy/README.md`](deploy/README.md).
 
 ## Why this exists
 
@@ -61,9 +63,25 @@ tool that offers it one tap away from a report is a tool for sellers, not buyers
 
 ## Development without a car
 
-You do not need a vehicle, or even CAN hardware, to work on this. `carpi.sim` is a
-virtual ECU that answers OBD-II requests over an in-process virtual CAN bus, so the
-whole stack runs on macOS and in CI.
+You need neither a vehicle nor CAN hardware. `carpi.sim` is a virtual ECU that answers
+real OBD-II requests over a real ISO-TP stack on an in-process virtual bus, so
+everything above the transport layer is exercised exactly as it would be in a driveway.
+
+### With containers, and no Python on your machine
+
+```bash
+./dev test        # run the suite
+./dev serve       # UI on http://localhost:8080
+./dev demo        # scan a simulated car
+./dev lint        # ruff + shellcheck
+./dev help        # everything else
+```
+
+Works with podman or docker; nothing else needs installing. The image is **Python 3.11
+on Debian 12**, which is what Raspberry Pi OS Bookworm ships — so this runs closer to
+the deployment target than a local install usually does.
+
+### Natively
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
@@ -72,20 +90,28 @@ pip install -e '.[dev]'
 carpi scenarios                             # what simulated cars are available
 carpi demo --scenario recently-cleared      # scan one, end to end
 carpi demo --scenario healthy --detail      # all live data and Mode 06 results
+carpi serve --transport sim                 # the phone UI, against a simulated car
 pytest
 ```
 
-`carpi demo` runs a simulated car in-process and scans it over a real ISO-TP stack, so
-everything above the transport layer is exercised exactly as it would be in a driveway.
 For a two-terminal setup, `carpi sim` serves a scenario over UDP multicast and
 `carpi scan --transport udp` connects to it.
 
-The SocketCAN path — the one a real car uses — is covered separately, and needs Linux:
+### The SocketCAN path
+
+The transport a real car uses needs a Linux kernel with `vcan`:
 
 ```bash
+./dev socketcan                              # in a container
+# or natively on Linux:
 sudo modprobe vcan && sudo ip link add dev vcan0 type vcan && sudo ip link set up vcan0
 CARPI_TEST_SOCKETCAN=vcan0 pytest -m socketcan
 ```
+
+On macOS or Windows the module must exist in your container runtime's virtual machine,
+which it usually does not. CI runs these on every push against a Linux runner, so
+skipping them locally costs no coverage — `./dev socketcan` prints the exact fix for
+podman's default machine if you want them anyway.
 
 ### Portability note
 
@@ -122,15 +148,38 @@ Two things worth writing on the case:
    at both ends. A third terminator causes bus errors.
 2. **Ignition ON, not ACC.** Many ECUs stay asleep in accessory mode and won't answer.
 
+## The phone interface
+
+`carpi serve` runs a local web UI, meant for a phone joined to the Pi's own hotspot.
+It shows the report worst-finding-first, streams live values during a test drive, and
+lets you download the raw JSON.
+
+It is entirely self-contained: no CDN, no fonts, no analytics, no external request of
+any kind. That is enforced by a test, because a stylesheet from a CDN is invisible in
+development and an unstyled page in a car park.
+
+**The interface is used by one conversation at a time.** A second inspection, or live
+values during an inspection, is refused rather than queued — two request/response
+conversations on one ISO-TP channel would each decode the other's replies, producing
+values quietly attributed to the wrong parameter.
+
+There is no authentication. The server is read-only, on its own hotspot, and a login
+would make a tool used one-handed in a driveway materially worse. **That reasoning stops
+holding the moment writing to a vehicle becomes possible** — coding must not ship
+without authentication in front of it.
+
 ## Layout
 
 ```
 src/carpi/
-├─ core/     transport · protocol · defs loader · rules engine
+├─ core/     transport · protocol · defs loader · rules engine · live polling
 ├─ defs/     THE DATABASE — YAML data + JSON schemas, validated in CI
 ├─ sim/      virtual ECU with scenario fixtures
+├─ server/   local HTTP + WebSocket API, and the PWA it serves
+├─ report/   text and JSON renderings
 └─ cli/      command-line surface
-tests/       unit tests + recorded-session replay fixtures
+deploy/      Pi setup: CAN HAT, systemd, hotspot, read-only root (unverified)
+tests/       unit tests, API contract tests, offline guarantees
 ```
 
 ## Contributing

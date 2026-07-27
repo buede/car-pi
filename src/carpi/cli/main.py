@@ -239,6 +239,81 @@ def sim(scenario: str, transport: str, channel: str | None) -> None:
         click.echo("\nstopped", err=True)
 
 
+@cli.command()
+@click.option(
+    "--transport",
+    type=click.Choice(["socketcan", "virtual", "udp", "sim"]),
+    default="socketcan",
+    show_default=True,
+    help="'sim' runs an in-process simulated car; the rest reach a real bus.",
+)
+@click.option("--channel", default=None, help="Interface name, e.g. can0.")
+@click.option("--bitrate", default=DEFAULT_BITRATE, show_default=True)
+@click.option("--extended/--standard", default=False, show_default=True)
+@click.option("--fd", is_flag=True, help="CAN FD.")
+@click.option(
+    "--scenario",
+    type=click.Choice(sorted(SCENARIOS)),
+    default="recently-cleared",
+    show_default=True,
+    help="Which simulated car to serve, when --transport sim.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Bind address. Use 0.0.0.0 to accept connections from a phone.",
+)
+@click.option("--port", default=8080, show_default=True)
+@click.option("--timeout", type=float, default=1.0, show_default=True)
+@click.option("--defs", type=click.Path(file_okay=False, path_type=Path), default=None)
+def serve(
+    transport: str,
+    channel: str | None,
+    bitrate: int,
+    extended: bool,
+    fd: bool,
+    scenario: str,
+    host: str,
+    port: int,
+    timeout: float,
+    defs: Path | None,
+) -> None:
+    """Serve the web UI, for use from a phone.
+
+    Defaults to 127.0.0.1 so an unconfigured run is not reachable from the network.
+    The portable unit binds its hotspot interface instead -- see deploy/.
+
+    The interface is used by one conversation at a time. A second inspection, or live
+    values during an inspection, is refused rather than queued: two request/response
+    conversations on one ISO-TP channel would each decode the other's replies.
+    """
+    import uvicorn
+
+    from carpi.server import DirectProvider, SimulatedProvider, VehicleGateway, create_app
+
+    database = _load_database(defs)
+    provider = (
+        SimulatedProvider(scenario)
+        if transport == "sim"
+        else DirectProvider(transport, channel, bitrate=bitrate, extended=extended, fd=fd)
+    )
+    gateway = VehicleGateway(provider, database, timeout=timeout)
+    app = create_app(gateway)
+
+    click.echo(f"interface: {provider.description}", err=True)
+    if provider.is_simulated:
+        click.echo("NOTE: serving a simulated vehicle, not a real one.", err=True)
+    if host in ("127.0.0.1", "localhost"):
+        click.echo(
+            "listening on localhost only; pass --host 0.0.0.0 to reach it from a phone",
+            err=True,
+        )
+    click.echo(f"UI: http://{host}:{port}/", err=True)
+
+    uvicorn.run(app, host=host, port=port, log_level="info", ws="websockets")
+
+
 @cli.command("scenarios")
 def list_scenarios() -> None:
     """List the simulated vehicles available to 'carpi demo'."""

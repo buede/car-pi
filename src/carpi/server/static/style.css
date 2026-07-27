@@ -1,0 +1,325 @@
+/*
+ * car-pi's phone UI.
+ *
+ * Designed for the actual conditions of use: a phone held one-handed, outdoors, in
+ * daylight or after dark, next to a car somebody is trying to sell. That drives the
+ * choices here -- large tap targets, high contrast, both colour schemes, and severity
+ * that reads without needing the legend.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --text: #14181d;
+  --text-dim: #5a636e;
+  --border: #d7dce3;
+  --accent: #0b6bcb;
+  --accent-text: #ffffff;
+
+  /* Severity. Hue alone is not enough: roughly one man in twelve has a red-green
+     colour vision deficiency, so every finding also carries a text label. */
+  --critical: #b3261e;
+  --high: #b25000;
+  --medium: #8a6d00;
+  --low: #396a3a;
+  --info: #4a5560;
+
+  --radius: 12px;
+  --pad: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101418;
+    --surface: #181d23;
+    --surface-2: #212832;
+    --text: #e8ecf1;
+    --text-dim: #9aa5b1;
+    --border: #2c3440;
+    --accent: #4f9ff0;
+    --accent-text: #06131f;
+
+    --critical: #ff6b5e;
+    --high: #ffa14a;
+    --medium: #e5c65a;
+    --low: #7fc781;
+    --info: #a8b3bf;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Keeps content clear of the notch and the home indicator. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+           env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: var(--pad);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.bar h1 {
+  font-size: 1.1rem;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.chip {
+  margin-left: auto;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.chip.simulated {
+  border-color: var(--medium);
+  color: var(--medium);
+}
+
+.tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 3.4rem;
+  z-index: 9;
+}
+
+.tab {
+  flex: 1;
+  /* Comfortably above the ~44px minimum, because this gets tapped with cold hands. */
+  min-height: 48px;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+main { padding: var(--pad); max-width: 46rem; margin: 0 auto; }
+
+.view { display: none; }
+.view.active { display: block; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--pad);
+  margin-bottom: var(--pad);
+}
+
+.card h2 { margin: 0 0 0.5rem; font-size: 1rem; }
+
+label { display: block; font-weight: 500; margin-bottom: 0.35rem; }
+
+input[type="number"] {
+  width: 100%;
+  min-height: 48px;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+button {
+  min-height: 48px;
+  padding: 0.7rem 1.1rem;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button.primary {
+  width: 100%;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+  margin-top: 0.5rem;
+}
+
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.hint { color: var(--text-dim); font-size: 0.85rem; margin: 0.5rem 0 0; }
+.hint.inline { display: inline; margin: 0; }
+
+.log {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.log li { padding: 0.15rem 0; border-top: 1px solid var(--border); }
+.log li:first-child { border-top: 0; }
+
+.spinner {
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 3s; }
+}
+
+/* --- findings ---------------------------------------------------------------- */
+
+.finding {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--sev, var(--info));
+  border-radius: var(--radius);
+  padding: var(--pad);
+  margin-bottom: 0.75rem;
+}
+
+.finding[data-severity="critical"] { --sev: var(--critical); }
+.finding[data-severity="high"]     { --sev: var(--high); }
+.finding[data-severity="medium"]   { --sev: var(--medium); }
+.finding[data-severity="low"]      { --sev: var(--low); }
+.finding[data-severity="info"]     { --sev: var(--info); }
+
+.finding .severity {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sev);
+  margin-bottom: 0.3rem;
+}
+
+.finding h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+.finding p { margin: 0 0 0.5rem; }
+
+.evidence {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  /* Long fact names must scroll here rather than widening the page. */
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.verdict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: var(--pad);
+}
+
+.count {
+  flex: 1 1 5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+  text-align: center;
+}
+
+.count b { display: block; font-size: 1.4rem; }
+.count span { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; }
+
+/* "Could not be assessed" is styled as a warning rather than as a pass, because the
+   whole point is that it is not one. */
+.unassessed { border-color: var(--medium); }
+.unassessed b { color: var(--medium); }
+
+.codes { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.codes .permanent { color: var(--critical); font-weight: 600; }
+
+.monitors { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+
+.monitor {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.monitor.incomplete { border-color: var(--high); color: var(--high); }
+
+/* --- live ------------------------------------------------------------------- */
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.6rem;
+}
+
+.gauge {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem;
+}
+
+.gauge .name { font-size: 0.72rem; color: var(--text-dim); }
+
+.gauge .value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  /* Tabular figures stop the number jittering sideways as digits change. */
+}
+
+.gauge .unit { font-size: 0.8rem; color: var(--text-dim); font-weight: 400; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th, td { text-align: left; padding: 0.4rem 0.3rem; border-bottom: 1px solid var(--border); }
+th { color: var(--text-dim); font-weight: 500; font-size: 0.78rem; }
+
+.scroll-x { overflow-x: auto; }
+
+.error {
+  border-left: 4px solid var(--critical);
+  color: var(--critical);
+}

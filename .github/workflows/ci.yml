@@ -42,6 +42,21 @@ jobs:
           ruff check src tests
           ruff format --check src tests
 
+      # The deployment scripts are shell, run as root on a Pi, and are the least
+      # exercised code here -- exactly where a quoting mistake hides.
+      - name: Shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck deploy/*.sh dev
+
+      # There is no browser in CI, so the UI's JavaScript is at least parsed. Combined
+      # with the API-contract tests in tests/test_server.py this covers the two ways the
+      # phone UI can break without any Python test noticing.
+      - name: Parse the UI JavaScript
+        run: |
+          for file in src/carpi/server/static/*.js; do
+            node --check "$file"
+          done
+
       - name: Validate the definition database
         run: carpi defs check
 
@@ -64,6 +79,33 @@ jobs:
           print(' ', len(document['findings']), 'findings')
           "
           done
+
+  container:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Developers run the suite through ./dev, so a broken Dockerfile breaks everyone's
+      # workflow while every native job stays green. Built here so that cannot happen
+      # quietly. The runtime target is built too, because it installs the package
+      # non-editable and so is the only thing that proves packaging works from scratch.
+      - name: Build the dev image
+        run: docker build --target dev -t carpi-dev:ci .
+
+      - name: Run the suite inside the container
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPYCACHEPREFIX=/tmp/pycache \
+            carpi-dev:ci pytest -q
+
+      - name: Build the runtime image and check it starts
+        run: |
+          docker build --target runtime -t carpi-runtime:ci .
+          docker run --rm carpi-runtime:ci carpi defs check
+          docker run --rm carpi-runtime:ci carpi demo --scenario healthy --format json \
+            | python -c "import json,sys; assert json.load(sys.stdin)['ecus']; print('runtime image OK')"
 
   socketcan:
     name: SocketCAN (vcan)
