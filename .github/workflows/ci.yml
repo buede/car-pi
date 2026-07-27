@@ -101,4 +101,15 @@ jobs:
       - name: Test over SocketCAN
         env:
           CARPI_TEST_SOCKETCAN: vcan0
-        run: pytest -q -m socketcan --no-header
+        run: |
+          set -euo pipefail
+          pytest -m socketcan -v --no-header | tee /tmp/socketcan.log
+          # A skipped test is not a passing test. These tests skip themselves when no
+          # interface is available, so without this guard the job would go green if
+          # vcan ever stopped loading -- reporting that the real-vehicle transport is
+          # covered when nothing had run at all.
+          grep -q PASSED /tmp/socketcan.log
+          if grep -q SKIPPED /tmp/socketcan.log; then
+            echo "::error::SocketCAN tests were skipped; the interface was not usable"
+            exit 1
+          fi

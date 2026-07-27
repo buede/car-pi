@@ -45,10 +45,18 @@ def socketcan_scan(database: Database):
     def run(name: str):
         scenario = get_scenario(name)
         assert _INTERFACE is not None
+        # SimulatedVehicle does not close a bus it was handed -- the caller owns it --
+        # so this fixture must. A leaked SocketCAN handle outlives the process and can
+        # block the next run, which is a genuine problem on a Pi and not just untidy.
         sim_bus = open_bus("socketcan", _INTERFACE)
-        vehicle = SimulatedVehicle([VirtualEcu(spec) for spec in scenario.ecus], bus=sim_bus)
-        with vehicle, CanLink.open("socketcan", _INTERFACE) as link:
-            result = scan_vehicle(link, database, claimed_odometer_km=scenario.claimed_odometer_km)
+        try:
+            vehicle = SimulatedVehicle([VirtualEcu(spec) for spec in scenario.ecus], bus=sim_bus)
+            with vehicle, CanLink.open("socketcan", _INTERFACE) as link:
+                result = scan_vehicle(
+                    link, database, claimed_odometer_km=scenario.claimed_odometer_km
+                )
+        finally:
+            sim_bus.shutdown()
         return scenario, result, result.evaluate(database), vehicle
 
     return run
