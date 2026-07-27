@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+#
+# Containerised development for car-pi, so the host needs no Python toolchain.
+#
+# The container is Python 3.11 on Debian 12, which is what Raspberry Pi OS Bookworm
+# ships -- so this runs closer to the deployment target than a local install usually
+# does.
+#
+#   ./dev test [args...]   run the suite (extra args go to pytest)
+#   ./dev lint             ruff check, ruff format --check, shellcheck
+#   ./dev fmt              apply ruff fixes and formatting
+#   ./dev defs             validate the definition database
+#   ./dev demo [scenario]  scan a simulated car
+#   ./dev serve            serve the UI on http://localhost:8080
+#   ./dev socketcan        run the SocketCAN suite (needs a kernel with vcan)
+#   ./dev shell            interactive shell in the container
+#   ./dev build            rebuild the image
+#   ./dev clean            remove the image
+#
+# Plain `podman run` / `docker run` rather than compose, because the compose provider
+# is the least reliable part of the toolchain -- on a Mac with podman it needs a live
+# API socket that is frequently stale. compose.yaml is still there for anyone whose
+# setup works, but nothing here depends on it.
+
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+IMAGE="localhost/carpi-dev:latest"
+
+if command -v podman >/dev/null 2>&1; then
+    ENGINE=podman
+elif command -v docker >/dev/null 2>&1; then
+    ENGINE=docker
+else
+    echo "dev: need podman or docker on PATH" >&2
+    exit 1
+fi
+
+# SELinux hosts refuse a bind mount without a relabel; macOS and Windows do not have
+# the concept and reject nothing, but there is no reason to pass the flag there.
+MOUNT_FLAGS=""
+[ "$(uname -s)" = "Linux" ] && MOUNT_FLAGS=":z"
+
+build() {
+    "$ENGINE" build --target dev -t "$IMAGE" .
+}
+
+ensure_image() {
+    if ! "$ENGINE" image inspect "$IMAGE" >/dev/null 2>&1; then
+        echo "dev: building $IMAGE (first run only)" >&2
+        build
+    fi
+}
+
+run() {
+    ensure_image
+    "$ENGINE" run --rm \
+        -v "$PWD:/src${MOUNT_FLAGS}" \
+        -w /src \
+        -e PYTHONDONTWRITEBYTECODE=1 \
+        -e PYTHONPYCACHEPREFIX=/tmp/pycache \
+        "$@"
+}
+
+command="${1:-help}"
+[ "$#" -gt 0 ] && shift
+
+case "$command" in
+    test)   run "$IMAGE" pytest "$@" ;;
+    lint)
+        run "$IMAGE" sh -c \
+            'ruff check src tests && ruff format --check src tests && shellcheck deploy/*.sh dev'
+        ;;
+    fmt)    run "$IMAGE" sh -c 'ruff check --fix src tests && ruff format src tests' ;;
+    defs)   run "$IMAGE" carpi defs check ;;
+    demo)   run "$IMAGE" carpi demo --scenario "${1:-recently-cleared}" ;;
+    serve)
+        echo "dev: UI on http://localhost:8080  (Ctrl-C to stop)" >&2
+        run -p 8080:8080 "$IMAGE" \
+            carpi serve --transport sim --host 0.0.0.0 --port 8080
+        ;;
+    socketcan)
+        # Needs to load a kernel module and create an interface, so: privileged, plus
+        # the host's modules. On macOS or Windows the module has to be in the container
+        # runtime's virtual machine -- see the message vcan.sh prints if it is missing.
+        extra=()
+        [ -d /lib/modules ] && extra+=(-v /lib/modules:/lib/modules:ro)
+        run --privileged --cap-add NET_ADMIN "${extra[@]}" \
+            -e CARPI_TEST_SOCKETCAN=vcan0 \
+            "$IMAGE" ./deploy/vcan.sh pytest -m socketcan "$@"
+        ;;
+    shell)  run -it "$IMAGE" bash ;;
+    build)  build ;;
+    clean)  "$ENGINE" image rm "$IMAGE" 2>/dev/null || true ;;
+    help|--help|-h)
+        sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        echo "dev: unknown command '$command'. Try ./dev help" >&2
+        exit 1
+        ;;
+esac

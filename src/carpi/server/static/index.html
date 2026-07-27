@@ -1,0 +1,87 @@
+<!doctype html>
+<!--
+  car-pi's phone interface.
+
+  No build step, no framework, no external requests. This file is the source and the
+  artefact, so it can be edited over SSH on the Pi and reloaded. Every asset is local
+  because the unit is used where there is no internet: a driveway, a car park, a kerb.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#101418">
+  <title>car-pi</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>car-pi</h1>
+    <span id="interface" class="chip" title="Which interface this unit is using">…</span>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" class="tab active" data-view="scan" aria-selected="true">Inspect</button>
+    <button role="tab" class="tab" data-view="live" aria-selected="false">Live</button>
+    <button role="tab" class="tab" data-view="history" aria-selected="false">History</button>
+  </nav>
+
+  <main>
+    <!-- Inspect -->
+    <section id="view-scan" class="view active">
+      <div class="card">
+        <label for="odometer">Advertised mileage <span class="hint">optional</span></label>
+        <input id="odometer" type="number" inputmode="numeric" min="0" step="1000"
+               placeholder="e.g. 145000" aria-describedby="odometer-hint">
+        <p id="odometer-hint" class="hint">
+          Enter what the seller claims, and the report will cross-check it against what
+          the engine controller actually holds. Mileage tampering usually only rewrites
+          the instrument cluster.
+        </p>
+        <button id="start" class="primary">Start inspection</button>
+        <p class="hint">
+          Ignition ON, not accessory — many modules stay asleep in accessory mode.
+        </p>
+      </div>
+
+      <div id="progress" class="card" hidden>
+        <h2>Scanning</h2>
+        <div class="spinner" aria-hidden="true"></div>
+        <ul id="events" class="log" aria-live="polite"></ul>
+      </div>
+
+      <div id="report"></div>
+    </section>
+
+    <!-- Live -->
+    <section id="view-live" class="view">
+      <div class="card">
+        <button id="live-toggle" class="primary">Start live values</button>
+        <p class="hint">
+          Some faults only appear in motion. Fuel trims that look fine at idle can be
+          badly off under load, and a coolant temperature that never climbs is invisible
+          in a snapshot. Have somebody else drive.
+        </p>
+        <p id="live-status" class="hint"></p>
+      </div>
+      <div id="gauges" class="gauges"></div>
+    </section>
+
+    <!-- History -->
+    <section id="view-history" class="view">
+      <div class="card">
+        <button id="refresh-history">Refresh</button>
+        <p class="hint">Scans are kept in memory and are lost when the unit powers down.
+          Download anything you want to keep.</p>
+      </div>
+      <div id="history"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

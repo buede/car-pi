@@ -82,6 +82,11 @@ def run_scenario(
                 link,
                 database,
                 claimed_odometer_km=claimed,  # type: ignore[arg-type]
+                # The simulator answers instantly, so the production one-second timeout
+                # would just be idle waiting. Kept non-zero so the no-answer path -- how
+                # an unsupported mode is detected -- is still exercised.
+                timeout=0.3,
+                discovery_timeout=0.3,
             )
         run_result = SimRun(
             scenario=scenario,

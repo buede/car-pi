@@ -1,0 +1,22 @@
+# Keep the build context small. .venv in particular is hundreds of megabytes and
+# would be copied on every build for no reason.
+.venv/
+venv/
+.git/
+.github/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Captured vehicle data. Never wanted in an image, and it contains VINs.
+scans/
+*.candump
+*.asc
+*.blf

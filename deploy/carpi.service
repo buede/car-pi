@@ -1,0 +1,54 @@
+[Unit]
+Description=car-pi vehicle diagnostics server
+Documentation=https://github.com/buede/car-pi
+# Wants rather than Requires: the server should come up and explain that no interface
+# is present, which is far more useful than systemd silently refusing to start it.
+Wants=network-online.target carpi-can.service
+After=network-online.target carpi-can.service
+
+[Service]
+Type=simple
+User=carpi
+Group=carpi
+# SocketCAN needs no privileges once the interface is up, and nothing else car-pi does
+# needs root either. Read-only diagnostics running as root would be a gratuitous risk.
+SupplementaryGroups=dialout
+
+Environment=PYTHONUNBUFFERED=1
+# 0.0.0.0 because the whole point is reaching it from a phone on the hotspot.
+ExecStart=/opt/carpi/venv/bin/carpi serve \
+    --transport socketcan \
+    --channel can0 \
+    --host 0.0.0.0 \
+    --port 8080
+
+Restart=on-failure
+RestartSec=3
+
+# A scan holds no state worth preserving, so a hard restart loses nothing.
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+# Hardening. None of this is exotic; it is what a service that only reads a CAN socket
+# and serves static files should be allowed to do, and no more.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=no
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# CAN plus loopback and inet for the HTTP server.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_CAN
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,93 @@
+# Compose definitions for the same services ./dev provides.
+#
+#   docker compose run --rm test
+#   docker compose up serve
+#
+# NOTE: `./dev` is the supported path and is what CI exercises. It drives podman or
+# docker directly, because the compose provider is the least reliable link in the
+# chain -- on macOS with podman it needs a live API socket that is often stale. This
+# file is here for anyone whose compose setup works and who prefers it, but it is not
+# covered by CI, so treat a problem here as a problem with this file rather than with
+# the container image.
+
+name: carpi
+
+# Every service shares one image, so the build happens once and later services reuse
+# it from cache. The working tree is mounted at the same path it was installed from,
+# which keeps `pip install -e` valid and makes edits live without a rebuild.
+x-dev: &dev
+  build:
+    context: .
+    target: dev
+  image: localhost/carpi-dev:latest
+  volumes:
+    - .:/src
+  working_dir: /src
+  environment:
+    # Keeps the host tree free of container-written caches, which would otherwise be
+    # owned by root and get in the way of running anything natively afterwards.
+    PYTHONDONTWRITEBYTECODE: "1"
+    PYTHONPYCACHEPREFIX: /tmp/pycache
+
+services:
+  test:
+    <<: *dev
+    command: ["pytest"]
+
+  lint:
+    <<: *dev
+    command:
+      - sh
+      - -c
+      - "ruff check src tests && ruff format --check src tests && shellcheck deploy/*.sh dev"
+
+  fmt:
+    <<: *dev
+    command: ["sh", "-c", "ruff check --fix src tests && ruff format src tests"]
+
+  defs:
+    <<: *dev
+    command: ["carpi", "defs", "check"]
+
+  demo:
+    <<: *dev
+    command: ["carpi", "demo", "--scenario", "recently-cleared"]
+
+  serve:
+    <<: *dev
+    # 0.0.0.0 inside the container so the published port reaches it. On a real Pi the
+    # server binds the hotspot interface instead; see deploy/.
+    command:
+      - carpi
+      - serve
+      - --transport
+      - sim
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+    ports:
+      - "8080:8080"
+
+  # SocketCAN needs to create a network interface and load a kernel module, so it runs
+  # privileged with the host's modules available. This is the only way to exercise the
+  # real-vehicle transport from a macOS or Windows host.
+  socketcan:
+    <<: *dev
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - .:/src
+      - /lib/modules:/lib/modules:ro
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPYCACHEPREFIX: /tmp/pycache
+      CARPI_TEST_SOCKETCAN: vcan0
+    command: ["./deploy/vcan.sh", "pytest", "-m", "socketcan"]
+
+  shell:
+    <<: *dev
+    command: ["bash"]
+    stdin_open: true
+    tty: true

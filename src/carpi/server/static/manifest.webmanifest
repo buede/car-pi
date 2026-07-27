@@ -1,0 +1,19 @@
+{
+  "name": "car-pi vehicle inspection",
+  "short_name": "car-pi",
+  "description": "Read-only OBD-II inspection for a car you are thinking of buying.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#101418",
+  "theme_color": "#101418",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}
