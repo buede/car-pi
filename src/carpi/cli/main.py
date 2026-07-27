@@ -369,10 +369,12 @@ def list_scenarios() -> None:
 # Registered here rather than defined in this module: the coding commands are the only
 # part of car-pi that can change a car, and they live where that is unmissable.
 def _register_vag_commands() -> None:
+    from carpi.cli.bench import bench
     from carpi.cli.vag import coding, vag
 
     cli.add_command(vag)
     cli.add_command(coding)
+    cli.add_command(bench)
 
 
 @cli.group()

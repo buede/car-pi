@@ -161,3 +161,14 @@ jobs:
             echo "::error::SocketCAN tests were skipped; the interface was not usable"
             exit 1
           fi
+
+      # The bench exists to catch timing problems that a virtual bus cannot show. vcan
+      # still has no bit timing, but it does put a real kernel CAN stack underneath --
+      # more than the in-process bus, less than two controllers on a wire.
+      - name: Run the hardware bench over vcan
+        env:
+          CARPI_TEST_SOCKETCAN: vcan0
+        run: |
+          set -euo pipefail
+          carpi bench obd  --kind socketcan --responder vcan0 --tester vcan0 --timeout 1.0
+          carpi bench tp20 --kind socketcan --responder vcan0 --tester vcan0 --timeout 1.5
