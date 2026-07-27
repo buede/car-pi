@@ -42,13 +42,19 @@ def _load_database(defs: Path | None) -> Database:
 
 
 def _emit(result, evaluation, output_format: str, out: Path | None, verbose: bool) -> None:
+    """Write the report to stdout, or to *out*.
+
+    Only the report itself goes to stdout. Status and progress messages go to stderr,
+    so `--format json` produces a stream that can be piped straight into another tool
+    without a human-readable preamble corrupting it.
+    """
     if output_format == "json":
         text = render_json(result, evaluation)
     else:
         text = render_text(result, evaluation, verbose=verbose)
     if out is not None:
         out.write_text(text + "\n", encoding="utf-8")
-        click.echo(f"written to {out}")
+        click.echo(f"written to {out}", err=True)
     else:
         click.echo(text)
 
@@ -184,7 +190,9 @@ def demo(
         result = scan_vehicle(link, database, claimed_odometer_km=claimed)
 
     evaluation = result.evaluate(database)
-    click.echo(f"scenario: {spec.name} -- {spec.summary}")
+    # stderr: which car was simulated is context for the operator, not part of the
+    # report, and on stdout it would make `--format json` unparseable.
+    click.echo(f"scenario: {spec.name} -- {spec.summary}", err=True)
     _emit(result, evaluation, output_format, out, detail)
 
 
@@ -217,9 +225,9 @@ def sim(scenario: str, transport: str, channel: str | None) -> None:
 
     vehicle = SimulatedVehicle.from_scenario(spec, **kwargs)
     modules = ", ".join(f"0x{e.spec.response_id:03X} {e.label}" for e in vehicle.ecus)
-    click.echo(f"scenario: {spec.name} -- {spec.summary}")
-    click.echo(f"serving {modules} on {transport}")
-    click.echo("Ctrl-C to stop.")
+    click.echo(f"scenario: {spec.name} -- {spec.summary}", err=True)
+    click.echo(f"serving {modules} on {transport}", err=True)
+    click.echo("Ctrl-C to stop.", err=True)
     try:
         with vehicle:
             while True:
@@ -228,7 +236,7 @@ def sim(scenario: str, transport: str, channel: str | None) -> None:
 
                 time.sleep(0.5)
     except KeyboardInterrupt:
-        click.echo("\nstopped")
+        click.echo("\nstopped", err=True)
 
 
 @cli.command("scenarios")

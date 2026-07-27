@@ -81,7 +81,14 @@ jobs:
       # regression in it is caught here rather than in a car park.
       - name: Set up a virtual CAN interface
         run: |
-          sudo modprobe vcan
+          set -euo pipefail
+          # The Azure-tuned kernel on GitHub's runners does not carry vcan in the base
+          # image; it lives in the linux-modules-extra package for the running kernel.
+          if ! sudo modprobe vcan 2>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -yqq "linux-modules-extra-$(uname -r)"
+            sudo modprobe vcan
+          fi
           sudo ip link add dev vcan0 type vcan
           sudo ip link set up vcan0
           ip -details link show vcan0
