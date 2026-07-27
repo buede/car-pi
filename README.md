@@ -219,7 +219,15 @@ Portable inspection unit, roughly €100:
 | Power | USB-C PD power bank | See below |
 | Harness | OBD-II (J1962) male pigtail | CAN_H = pin 6, CAN_L = pin 14, GND = pin 4 or 5 |
 
-**Avoid MCP2515 boards.** CAN 2.0 only, no CAN FD, which rules out 2019+ platforms.
+**On a pre-2019 car, build the interface instead.** CAN FD did not exist in 2006, so on a
+Passat B6 the CAN FD HAT is paying for a feature the car cannot use. An MCP2515 plus a
+3.3 V SN65HVD230 transceiver costs about €5, needs no custom software, and is fully
+adequate — see [`hardware/README.md`](hardware/README.md) for the wiring, the netlist, and
+the two traps that catch most hand-built boards.
+
+`carpi bench` runs the simulator on one CAN interface and the client on another, so two
+cheap nodes on a wire validate the stack — including TP2.0's timing and keepalive — before
+anything touches a car.
 
 **Power the Pi from a battery bank, not the car.** This removes the automotive
 transient-protection stage, removes SD-card corruption when the ignition is cycled,
