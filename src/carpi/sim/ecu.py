@@ -40,6 +40,22 @@ MODE_PENDING = 0x07
 MODE_INFO = 0x09
 MODE_PERMANENT = 0x0A
 
+# UDS. Note that services 0x03/0x04/0x07/0x0A above and 0x10/0x19/0x22/0x3E here share
+# no numbering conflict: OBD-II modes occupy 0x01-0x0A and UDS starts at 0x10.
+UDS_SESSION_CONTROL = 0x10
+UDS_READ_DTC = 0x19
+UDS_READ_DATA_BY_ID = 0x22
+UDS_TESTER_PRESENT = 0x3E
+
+SESSION_DEFAULT = 0x01
+SESSION_EXTENDED = 0x03
+
+NRC_SERVICE_NOT_SUPPORTED = 0x11
+NRC_SUBFUNCTION_NOT_SUPPORTED = 0x12
+NRC_REQUEST_OUT_OF_RANGE = 0x31
+NRC_SECURITY_ACCESS_DENIED = 0x33
+NRC_SERVICE_NOT_SUPPORTED_IN_SESSION = 0x7F
+
 _INFO_VIN = 0x02
 _INFO_CAL_ID = 0x04
 _INFO_CVN = 0x06
@@ -108,6 +124,9 @@ class VirtualEcu:
         # is meant to be collecting.
         self.clear_requests: list[bytes] = []
         self.received: list[bytes] = []
+        # A real module tracks which session it is in, and refuses some identifiers until
+        # a tester has asked for the extended one.
+        self._session = SESSION_DEFAULT
 
     @property
     def label(self) -> str:
@@ -140,7 +159,67 @@ class VirtualEcu:
         if mode == MODE_INFO:
             return self._info(request)
 
+        if mode == UDS_TESTER_PRESENT:
+            return bytes([0x7E, 0x00])
+        if mode == UDS_SESSION_CONTROL:
+            return self._session_control(request)
+        if mode == UDS_READ_DATA_BY_ID:
+            return self._read_did(request)
+        if mode == UDS_READ_DTC:
+            return self._read_dtc(request)
+
         return bytes([0x7F, mode, _NRC_SERVICE_NOT_SUPPORTED])
+
+    # --- UDS -----------------------------------------------------------------
+
+    def _session_control(self, request: bytes) -> bytes:
+        if len(request) < 2:
+            return bytes([0x7F, UDS_SESSION_CONTROL, NRC_SUBFUNCTION_NOT_SUPPORTED])
+        session = request[1] & 0x7F
+        if session not in (SESSION_DEFAULT, SESSION_EXTENDED):
+            # A real module would offer a programming session here. This one refuses,
+            # which is a reasonable thing for a simulator with nothing to program.
+            return bytes([0x7F, UDS_SESSION_CONTROL, NRC_SUBFUNCTION_NOT_SUPPORTED])
+        self._session = session
+        # Positive response carries the P2 timing parameters.
+        return bytes([0x50, session, 0x00, 0x32, 0x01, 0xF4])
+
+    def _read_did(self, request: bytes) -> bytes | None:
+        if len(request) < 3:
+            return bytes([0x7F, UDS_READ_DATA_BY_ID, NRC_REQUEST_OUT_OF_RANGE])
+        did = (request[1] << 8) | request[2]
+
+        if did in self.spec.uds_protected_dids:
+            return bytes([0x7F, UDS_READ_DATA_BY_ID, NRC_SECURITY_ACCESS_DENIED])
+
+        if did in self.spec.uds_extended_session_dids and self._session != SESSION_EXTENDED:
+            return bytes([0x7F, UDS_READ_DATA_BY_ID, NRC_SERVICE_NOT_SUPPORTED_IN_SESSION])
+
+        data = self.spec.uds_dids.get(did)
+        if data is None:
+            # Real modules vary between silence and NRC 0x31 for an unknown identifier.
+            # The explicit refusal is chosen here because it is the faster of the two for
+            # a sweep, and the client treats them identically.
+            return bytes([0x7F, UDS_READ_DATA_BY_ID, NRC_REQUEST_OUT_OF_RANGE])
+        return bytes([0x62, request[1], request[2]]) + data
+
+    def _read_dtc(self, request: bytes) -> bytes | None:
+        if len(request) < 2:
+            return bytes([0x7F, UDS_READ_DTC, NRC_SUBFUNCTION_NOT_SUPPORTED])
+        subfunction = request[1]
+        mask = request[2] if len(request) > 2 else 0xFF
+        matching = [dtc for dtc in self.spec.uds_dtcs if dtc[3] & mask]
+
+        if subfunction == 0x01:  # report number of DTCs by status mask
+            count = len(matching).to_bytes(2, "big")
+            # 59 01 <availability> <format: 0x01 = ISO 14229 three-byte> <count>
+            return bytes([0x59, 0x01, 0xFF, 0x01]) + count
+        if subfunction == 0x02:  # report DTCs by status mask
+            payload = bytearray([0x59, 0x02, 0xFF])
+            for high, middle, low, status in matching:
+                payload.extend([high, middle, low, status])
+            return bytes(payload)
+        return bytes([0x7F, UDS_READ_DTC, NRC_SUBFUNCTION_NOT_SUPPORTED])
 
     def _live(self, request: bytes) -> bytes | None:
         if len(request) < 2:
@@ -246,33 +325,43 @@ class SimulatedVehicle:
     def bus(self) -> can.BusABC:
         return self._bus
 
-    def _addresses(self, response_id: int) -> tuple[isotp.Address, isotp.AsymmetricAddress]:
-        """Physical and functional addresses for one ECU, from the ECU's own side."""
+    def _addresses(self, spec: EcuSpec) -> list[isotp.Address | isotp.AsymmetricAddress]:
+        """Addresses one module listens on, from the module's own side.
+
+        Always its physical address, and additionally the OBD-II functional broadcast if
+        it implements OBD-II. A module that does not -- an instrument cluster, say -- is
+        reachable only at its own address, which is why finding it needs a sweep.
+        """
         if self._extended:
-            index = response_id - _RESPONSE_BASE_11BIT
+            index = spec.response_id - _RESPONSE_BASE_11BIT
             mode = isotp.AddressingMode.Normal_29bits
             tx_id = 0x18DAF100 | index
             rx_id = 0x18DA0000 | (index << 8) | 0xF1
             functional_rx = _FUNCTIONAL_29BIT
         else:
             mode = isotp.AddressingMode.Normal_11bits
-            tx_id = response_id
-            rx_id = response_id - 8
+            tx_id = spec.response_id
+            rx_id = spec.effective_request_id
             functional_rx = _FUNCTIONAL_11BIT
 
-        physical = isotp.Address(mode, txid=tx_id, rxid=rx_id)
-        functional = isotp.AsymmetricAddress(
-            tx_addr=isotp.Address(mode, txid=tx_id, tx_only=True),
-            rx_addr=isotp.Address(mode, rxid=functional_rx, rx_only=True),
-        )
-        return physical, functional
+        addresses: list[isotp.Address | isotp.AsymmetricAddress] = [
+            isotp.Address(mode, txid=tx_id, rxid=rx_id)
+        ]
+        if spec.answers_obd:
+            addresses.append(
+                isotp.AsymmetricAddress(
+                    tx_addr=isotp.Address(mode, txid=tx_id, tx_only=True),
+                    rx_addr=isotp.Address(mode, rxid=functional_rx, rx_only=True),
+                )
+            )
+        return addresses
 
     def start(self) -> None:
         """Bring up the ISO-TP stacks and begin answering requests."""
         if self._thread is not None:
             return
         for ecu in self.ecus:
-            for address in self._addresses(ecu.spec.response_id):
+            for address in self._addresses(ecu.spec):
                 stack = isotp.NotifierBasedCanStack(
                     bus=self._bus,
                     notifier=self._notifier,

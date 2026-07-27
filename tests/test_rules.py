@@ -25,6 +25,7 @@ DIRECTLY_TESTED = frozenset(
         "mil-off-but-faults-stored",
         "fuel-trim-excessive-bank2",
         "control-module-voltage-high",
+        "module-vin-mismatch",
     }
 )
 
@@ -112,6 +113,27 @@ class TestFuelTrim:
         fired = _fired(database, **{"pid.ltft_bank1": 8.0, "pid.ltft_bank2": -6.0})
         assert "fuel-trim-banks-diverge" in fired
         assert "fuel-trim-excessive-bank1" not in fired
+
+
+class TestCrossModuleChecks:
+    def test_a_module_reporting_a_different_vin(self, database: Database) -> None:
+        """A module holding another car's VIN came out of another car.
+
+        Sometimes an honest repair with a second-hand part, sometimes a cluster fitted
+        specifically to show a lower mileage. Either way it is worth asking about.
+        """
+        fired = _fired(database, **{"uds.module_vin_count": 3, "uds.vin_mismatch_count": 1})
+        assert "module-vin-mismatch" in fired
+
+    def test_agreeing_vins_do_not_fire(self, database: Database) -> None:
+        fired = _fired(database, **{"uds.module_vin_count": 3, "uds.vin_mismatch_count": 0})
+        assert "module-vin-mismatch" not in fired
+
+    def test_the_check_is_skipped_when_no_module_reports_a_vin(self, database: Database) -> None:
+        """Most modules do not implement UDS. Silence is not agreement."""
+        evaluation = evaluate(database, dict(_BASELINE))
+        skipped = {s.rule_id for s in evaluation.skipped if s.missing}
+        assert "module-vin-mismatch" in skipped
 
 
 class TestChargingSystem:

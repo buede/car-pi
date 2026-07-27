@@ -43,9 +43,17 @@ class TestScenarioExpectations:
             modes = {request[0] for request in ecu.received}
             assert 0x04 not in modes, f"{ecu.label} was asked to clear codes"
 
-    def test_every_responding_module_was_scanned(self, name: str, run_scenario) -> None:
+    def test_every_obd_module_was_scanned(self, name: str, run_scenario) -> None:
+        """Counted against the modules that implement OBD-II, not against every module.
+
+        A module such as an instrument cluster implements no OBD-II and never answers the
+        functional broadcast, so it is legitimately absent from the OBD-II results and is
+        reached only through a vehicle profile. That asymmetry is the point of the
+        manufacturer-specific layer, not an oversight.
+        """
         run = run_scenario(name)
-        assert len(run.result.ecus) == len(run.scenario.ecus)
+        expected = [spec for spec in run.scenario.ecus if spec.answers_obd]
+        assert len(run.result.ecus) == len(expected)
 
     def test_no_request_errors(self, name: str, run_scenario) -> None:
         run = run_scenario(name)

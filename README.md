@@ -8,9 +8,9 @@ codes shortly before you arrived to look at it.
 Built as an alternative to the proprietary tools (VCDS, BimmerCode, Carly, Autel),
 with the definition database open and community-editable.
 
-> **Status: pre-alpha.** The generic OBD-II read path, the virtual ECU simulator and
-> the phone UI work. Nothing here writes to a vehicle. The Raspberry Pi deployment
-> scripts in `deploy/` have not yet been run on real hardware — see
+> **Status: pre-alpha.** The generic OBD-II read path, read-only UDS, the virtual ECU
+> simulator and the phone UI all work. Nothing here writes to a vehicle. The Raspberry Pi
+> deployment scripts in `deploy/` have not yet been run on real hardware — see
 > [`deploy/README.md`](deploy/README.md).
 
 ## Why this exists
@@ -40,9 +40,51 @@ no authentication and nothing a seller can refuse. The checks that matter most:
 - **Fuel trims** at idle versus cruise — vacuum leaks, MAF and injector wear.
 - **ECU swap / tune detection** — Mode `09` calibration IDs and CVNs.
 
-Make-specific reads (odometer cross-checked across several ECUs to catch mileage
-tampering, DPF soot load, hybrid battery state of health) come from the definition
-database and are being built out for VAG and Toyota/Honda/Mazda first.
+## Beyond OBD-II
+
+OBD-II reaches eight modules, chosen by emissions regulators. The instrument cluster
+holding the odometer is not one of them, and neither is the ABS or body controller. So
+car-pi also speaks **UDS (ISO 14229)**, read-only:
+
+- **Cross-module odometer comparison.** Mileage tampering is nearly always done by
+  rewriting the instrument cluster, leaving every other module holding the true figure.
+  Modules do not drift apart on their own, so a disagreement is close to proof.
+- **Cross-module VIN comparison** via the standardised identifier `0xF190`. A module
+  holding another car's VIN came out of another car.
+- **Manufacturer fault codes** from any module, invisible to generic OBD-II.
+- **Module identification** — serial and part numbers, and the programming and
+  calibration dates. A cluster reprogrammed last month on a high-mileage car is worth a
+  question.
+
+There is no standard map of manufacturer module addresses, so car-pi finds them:
+
+```bash
+carpi uds discover                              # sweep 0x700–0x7FF, read-only probes
+carpi uds identify --request-id 0x714 --response-id 0x77E
+carpi uds scan-dids --request-id 0x714 --response-id 0x77E --out cluster.json
+```
+
+`scan-dids` is how the database grows: it asks a module for every data identifier in a
+range and records what comes back. Three outcomes all matter — data, *locked*
+(`NRC 0x33`, meaning the identifier exists and the manufacturer protected it, often the
+interesting ones), and nothing there.
+
+**Nothing in this can modify a vehicle.** The UDS services that could —
+`WriteDataByIdentifier`, `RoutineControl`, `SecurityAccess`, `ECUReset`, the transfer
+services — are not implemented, the client refuses to emit them if one is ever routed
+through it, and a test asserts no simulated module ever receives one.
+
+### Why `defs/vehicles/` is nearly empty
+
+Manufacturer identifiers cannot be verified without the car in front of you. A wrong
+odometer identifier does not fail loudly — it returns plausible bytes that decode to a
+plausible mileage, and somebody buys a car on the strength of it.
+
+So car-pi ships the *engine* and the *scanner*, not a database of guesses. Only the ISO
+14229 standard block is claimed as fact, because it is in a published standard. Everything
+make-specific arrives from real scans, confirmed against a car whose true state was
+independently known. See [`src/carpi/defs/vehicles/README.md`](src/carpi/defs/vehicles/README.md)
+for how to contribute one — that is the highest-value thing anyone can add.
 
 **car-pi will not clear your fault codes.** Mode `04` is deliberately unreachable
 from the inspection path — clearing codes destroys exactly the evidence above, and a

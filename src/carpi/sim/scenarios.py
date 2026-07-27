@@ -37,6 +37,31 @@ class EcuSpec:
     cvns: tuple[bytes, ...] = ()
     ecu_name: str | None = None
 
+    # --- addressing ----------------------------------------------------------
+    # Modules outside the OBD-II range need their request ID stated, since the
+    # reply-minus-eight convention only holds for 0x7E0-0x7EF.
+    request_id: int | None = None
+    # An instrument cluster does not implement OBD-II and will not answer the functional
+    # broadcast. Setting this False is what makes such a module findable only by an
+    # address sweep, which is the situation on a real car.
+    answers_obd: bool = True
+
+    # --- UDS -----------------------------------------------------------------
+    uds_dids: dict[int, bytes] = field(default_factory=dict)
+    # Answered with NRC 0x33, so the "identifier exists but is locked" path is exercised.
+    # On a real car this is where the interesting values often are.
+    uds_protected_dids: frozenset[int] = frozenset()
+    # Refused with NRC 0x7F until an extended session is started. A module that returns
+    # nothing in the default session looks exactly like one that has no such identifier,
+    # which is a real and confusing failure mode.
+    uds_extended_session_dids: frozenset[int] = frozenset()
+    # (high, middle, low, status)
+    uds_dtcs: tuple[tuple[int, int, int, int], ...] = ()
+
+    @property
+    def effective_request_id(self) -> int:
+        return self.request_id if self.request_id is not None else self.response_id - 8
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -47,6 +72,9 @@ class Scenario:
     ecus: tuple[EcuSpec, ...]
     claimed_odometer_km: float | None = None
     expect_findings: tuple[str, ...] = ()
+    # Vehicle profile this scenario is described by, if any. Lets `carpi demo` exercise
+    # the manufacturer-specific path without pretending a real car is attached.
+    profile: str | None = None
 
 
 def _engine_pids(
@@ -288,6 +316,64 @@ _COLD_RUNNING = Scenario(
     ),
 )
 
+# --- manufacturer-specific (UDS) ------------------------------------------------
+#
+# The identifiers here are the invented ones from
+# defs/vehicles/example/simulated.yaml. 0xCAFE is not a real data identifier.
+
+
+def _uds_u24(value: int) -> bytes:
+    return int(value).to_bytes(3, "big")
+
+
+_CLUSTER_TAMPERED = Scenario(
+    name="cluster-tampered",
+    summary=(
+        "The instrument cluster was rewritten to 145,000 km but the engine controller "
+        "still holds 285,400. The cluster sits outside the OBD-II address range, so only "
+        "an address sweep finds it -- which is exactly why a generic scan tool misses this."
+    ),
+    profile="example-simulated",
+    ecus=(
+        _engine(
+            _engine_pids(odometer_km=285_400),
+            uds_dids={
+                0xCAFE: _uds_u24(285_400),
+                0xF190: SIM_VIN.encode("ascii"),
+                0xF18C: b"ECM-0000001",
+                0xF199: bytes.fromhex("20180412"),  # BCD programming date
+            },
+        ),
+        EcuSpec(
+            response_id=0x77E,
+            request_id=0x714,
+            label="Instrument cluster",
+            # A cluster implements no OBD-II at all, so it never answers 0x7DF.
+            answers_obd=False,
+            ecu_name="CARPI-SIM-CLUSTER",
+            uds_dids={
+                0xCAFE: _uds_u24(145_000),
+                0xCAFD: (900).to_bytes(2, "big"),
+                0xCAFC: b"CARPI-CLUSTER-01",
+                0xF190: SIM_VIN.encode("ascii"),
+                0xF18C: b"CLU-0000001",
+                # Reprogrammed years after the engine module: on a real car, the
+                # fingerprint of a cluster that was swapped or rewritten.
+                0xF199: bytes.fromhex("20250903"),
+            },
+            # Present but locked, so the NRC 0x33 path gets exercised.
+            uds_protected_dids=frozenset({0xCAFB}),
+            uds_extended_session_dids=frozenset({0xCAFC}),
+            uds_dtcs=((0xD0, 0x12, 0x08, 0x2F),),  # U1012-08, a network fault,
+        ),
+    ),
+    claimed_odometer_km=145_000,
+    expect_findings=(
+        "cross-ecu-odometer-mismatch",
+        "odometer-disagrees-with-advertised",
+    ),
+)
+
 SCENARIOS: dict[str, Scenario] = {
     scenario.name: scenario
     for scenario in (
@@ -297,6 +383,7 @@ SCENARIOS: dict[str, Scenario] = {
         _LEAN_BANK_ONE,
         _MILEAGE_TAMPERED,
         _COLD_RUNNING,
+        _CLUSTER_TAMPERED,
     )
 }
 

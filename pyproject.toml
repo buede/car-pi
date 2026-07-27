@@ -55,7 +55,8 @@ where = ["src"]
   "schema/*.json",
   "generic/*.yaml",
   "generic/rules/*.yaml",
-  "vehicles/*/*/*.yaml",
+  "vehicles/*.md",
+  "vehicles/*/*.yaml",
 ]
 # The PWA ships inside the package so the appliance has no separate build or deploy
 # step. A missing entry here yields a server that starts and serves nothing.

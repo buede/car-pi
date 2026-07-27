@@ -1,0 +1,75 @@
+# A fixture, not a car.
+#
+# This profile describes the built-in simulator, and exists to prove the vehicle-profile
+# machinery end to end: a module outside the OBD-II address range, an extended
+# diagnostic session, manufacturer identifiers, and the cross-module odometer comparison.
+#
+# `fictional: true` excludes it from ever being matched against a real vehicle, so its
+# invented identifiers can never be reported as some actual car's data.
+#
+# The identifiers below are deliberately absurd -- 0xCAFE is not a real manufacturer
+# data identifier and no vehicle answers it. Anyone copying this file as a starting point
+# should be in no doubt that the numbers have to be replaced with ones confirmed against
+# a real car. See ../README.md for how.
+
+meta:
+  id: example-simulated
+  make: Example
+  platform: Simulated
+  confidence: community
+  fictional: true
+  note: >
+    Fixture for the built-in simulator. Not a real vehicle, and the data identifiers are
+    invented. Never matched against a real car.
+
+ecus:
+  # Outside 0x7E0-0x7EF, so generic OBD-II discovery cannot find it. This is the whole
+  # reason the address sweep exists: on a real car the odometer lives in a module like
+  # this one, and a generic scan tool never speaks to it.
+  - name: Instrument cluster
+    request_id: 0x714
+    response_id: 0x77E
+    session: extended
+    reads:
+      - id: odometer_km
+        label: Odometer (instrument cluster)
+        did: 0xCAFE
+        unit: km
+        confidence: community
+        decode:
+          type: uint
+          length: 3
+          range: [0, 2000000]
+      - id: service_interval_km
+        label: Distance to next service
+        did: 0xCAFD
+        unit: km
+        confidence: community
+        decode:
+          type: uint
+          length: 2
+          range: [0, 65535]
+      - id: cluster_part_number
+        label: Cluster part number
+        did: 0xCAFC
+        confidence: community
+        decode:
+          type: ascii
+
+  # The same identifier on a second module. Reads sharing an id are compared against
+  # each other, which is how mileage tampering shows up: rewriting the cluster leaves
+  # every other module holding the true figure.
+  - name: Engine control module
+    request_id: 0x7E0
+    response_id: 0x7E8
+    session: extended
+    reads:
+      - id: odometer_km
+        label: Odometer (engine control module)
+        did: 0xCAFE
+        unit: km
+        confidence: community
+        decode:
+          type: uint
+          length: 3
+          range: [0, 2000000]

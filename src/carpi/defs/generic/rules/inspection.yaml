@@ -204,6 +204,43 @@ rules:
   # cross-ECU odometer comparison needs manufacturer-specific reads and arrives
   # with the vehicles/ definitions.
 
+  # --- Cross-module checks --------------------------------------------------
+  # These need more than generic OBD-II: the odometer comparison needs a vehicle
+  # profile, and the VIN comparison needs modules that implement UDS. Both are skipped
+  # rather than passed when that data is absent.
+
+  - id: cross-ecu-odometer-mismatch
+    title: Modules disagree about how far the car has travelled
+    severity: critical
+    when: "vehicle.odometer_spread_km > 1000"
+    explain: >
+      Two or more control modules hold different mileage figures, differing by more than
+      1000 km. Modules do not drift apart on their own -- they are written by the car
+      itself and should agree for its whole life. Mileage tampering is nearly always done
+      by rewriting the instrument cluster, because that is the number a buyer looks at,
+      leaving the engine, gearbox and ABS modules still holding the true figure. Treat
+      the highest reading as the real one, and treat this as a reason to walk away rather
+      than to negotiate: it also invalidates every service-history assumption about the
+      car, and in most countries it is fraud.
+    confidence: official
+    references:
+      - "ISO 14229-1 ReadDataByIdentifier"
+
+  - id: module-vin-mismatch
+    title: A control module reports a different VIN from the rest of the car
+    severity: high
+    when: "uds.vin_mismatch_count > 0"
+    explain: >
+      At least one module holds a vehicle identification number that does not match the
+      others. Modules are programmed with the VIN of the car they are built into, so a
+      mismatch means this one came out of a different vehicle. That is sometimes an honest
+      repair with a second-hand part, and sometimes a cluster fitted specifically to show
+      a lower mileage. Either way it is worth a direct question, and it means the service
+      history attached to the VIN may not describe the parts now in the car.
+    confidence: official
+    references:
+      - "ISO 14229-1 data identifier 0xF190"
+
   - id: odometer-disagrees-with-advertised
     title: The car's own odometer disagrees with the advertised mileage
     severity: critical

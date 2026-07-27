@@ -88,6 +88,7 @@ def render_text(result: ScanResult, evaluation: Evaluation, *, verbose: bool = F
     lines.extend(_findings(evaluation))
     lines.extend(_not_assessed(evaluation))
     lines.extend(_fault_codes(result))
+    lines.extend(_module_data(result))
     lines.extend(_monitors(result))
     if verbose:
         lines.extend(_live_data(result))
@@ -129,11 +130,14 @@ def _findings(evaluation: Evaluation) -> list[str]:
                 f"{name} = {_number(value)}" for name, value in sorted(finding.evidence.items())
             )
             lines.append(_wrap(f"Evidence: {evidence}"))
-        if finding.confidence != "official":
+        # Only `community` warrants a caveat. `verified` means somebody *did* confirm it
+        # against a reference vehicle, so warning that it was not is simply wrong -- and
+        # a caveat attached to everything is a caveat nobody reads.
+        if finding.confidence == "community":
             lines.append(
                 _wrap(
-                    f"Confidence: {finding.confidence} -- this check has not been "
-                    f"confirmed against a known-good reference vehicle."
+                    "Confidence: community -- this check has not been confirmed against "
+                    "a reference vehicle, so weigh it accordingly."
                 )
             )
     return lines
@@ -180,6 +184,63 @@ def _fault_codes(result: ScanResult) -> list[str]:
     if not any_codes:
         lines.append("")
         lines.append(f"{_INDENT}None reported by any module.")
+    return lines
+
+
+def _module_data(result: ScanResult) -> list[str]:
+    """Manufacturer-specific reads, and the odometer comparison they make possible."""
+    if not result.module_readings:
+        return []
+
+    lines = _rule(f"Manufacturer data ({result.profile_label})")
+
+    odometers = result.odometer_by_module
+    if len(odometers) >= 2:
+        spread = max(odometers.values()) - min(odometers.values())
+        lines.append("")
+        lines.append(f"{_INDENT}Odometer, as each module holds it:")
+        for name, value in sorted(odometers.items(), key=lambda item: -item[1]):
+            lines.append(f"{_INDENT}  {value:>12,.0f} km   {name}")
+        lines.append(f"{_INDENT}  {'spread':>12}     {spread:,.0f} km")
+
+    for reading in result.module_readings:
+        lines.append("")
+        state = "no answer" if not reading.reached else f"{len(reading.values)} value(s)"
+        # Raw address IDs rather than the address label, which for a profile ECU is just
+        # the module's own name again.
+        ids = f"{reading.ecu.request_id:03X}/{reading.ecu.response_id:03X}"
+        lines.append(f"  {reading.ecu.name}  [{ids}, {state}]")
+        for key, value in sorted(reading.values.items()):
+            read = next((r for r in reading.ecu.reads if r.id == key), None)
+            unit = f" {read.unit}" if read and read.unit else ""
+            lines.append(f"{_INDENT}{read.display if read else key}: {_number(value)}{unit}")
+        if reading.protected:
+            # A positive finding, not a failure: the identifier exists and is locked.
+            lines.append(
+                _wrap(f"present but locked by the manufacturer: {', '.join(reading.protected)}")
+            )
+        if reading.implausible:
+            lines.append(
+                _wrap(
+                    f"outside the plausible range, so excluded: "
+                    f"{', '.join(reading.implausible)}. This usually means the definition "
+                    f"is wrong rather than the car."
+                )
+            )
+
+    confidences = {
+        read.confidence for reading in result.module_readings for read in reading.ecu.reads
+    }
+    if confidences and confidences != {"official"}:
+        lines.append("")
+        lines.append(
+            _wrap(
+                "These manufacturer definitions are not derived from a published "
+                "standard. Values are as trustworthy as the definition behind them -- "
+                "check the confidence label before acting on one.",
+                indent=_INDENT,
+            )
+        )
     return lines
 
 
@@ -274,7 +335,11 @@ def to_dict(result: ScanResult, evaluation: Evaluation) -> dict[str, Any]:
             "vin": result.vin,
             "claimed_odometer_km": result.claimed_odometer_km,
             "notes": list(result.notes),
+            "profile_id": result.profile_id,
+            "profile_label": result.profile_label,
         },
+        "module_readings": [reading.as_dict() for reading in result.module_readings],
+        "odometer_by_module": result.odometer_by_module,
         "ecus": [
             {
                 "address": {
@@ -286,6 +351,7 @@ def to_dict(result: ScanResult, evaluation: Evaluation) -> dict[str, Any]:
                 "ecu_name": ecu.ecu_name,
                 "supported_pids": [f"0x{pid:02X}" for pid in ecu.supported_pids],
                 "vin": ecu.vin,
+                "uds_vin": ecu.uds_vin,
                 "calibration_ids": list(ecu.calibration_ids),
                 "calibration_verification_numbers": list(ecu.calibration_verification_numbers),
                 "dtcs": {

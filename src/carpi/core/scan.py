@@ -26,9 +26,11 @@ from carpi.core.protocol.obd2 import (
     PidReading,
     ProtocolError,
 )
+from carpi.core.protocol.uds import UdsClient, UdsError
 from carpi.core.rules import Evaluation, evaluate, flatten_facts
 from carpi.core.transport.base import EcuAddress, NoResponse, TransportError
 from carpi.core.transport.canbus import CanLink
+from carpi.core.vehicles import ModuleReading, VehicleProfile, read_module
 
 __all__ = [
     "EcuScan",
@@ -71,6 +73,10 @@ class EcuScan:
     unsupported: tuple[str, ...] = ()
     # Reads that went genuinely wrong: a malformed reply, or a transport fault.
     errors: tuple[str, ...] = ()
+    # VIN as this module itself reports it, via the standardised UDS identifier 0xF190.
+    # A module holding a different VIN from the rest of the car was fitted from another
+    # vehicle -- which for an instrument cluster is the classic mileage-tampering method.
+    uds_vin: str | None = None
 
     @property
     def monitors(self) -> dict[str, dict[str, bool]]:
@@ -109,6 +115,25 @@ class ScanResult:
     ecus: tuple[EcuScan, ...] = ()
     claimed_odometer_km: float | None = None
     notes: tuple[str, ...] = ()
+    # Manufacturer-specific results, present only when a vehicle profile was used.
+    profile_id: str | None = None
+    profile_label: str | None = None
+    module_readings: tuple[ModuleReading, ...] = ()
+
+    @property
+    def odometer_by_module(self) -> dict[str, float]:
+        """Every module that reported an odometer, by module name.
+
+        The comparison this enables is the point of the whole manufacturer-specific
+        path: tampering is nearly always done by rewriting the instrument cluster,
+        leaving every other module holding the true figure.
+        """
+        found: dict[str, float] = {}
+        for reading in self.module_readings:
+            value = reading.values.get("odometer_km")
+            if isinstance(value, int | float):
+                found[reading.ecu.name] = float(value)
+        return found
 
     @property
     def primary(self) -> EcuScan | None:
@@ -225,8 +250,18 @@ def scan_vehicle(
     timeout: float = 1.0,
     discovery_timeout: float = 1.0,
     on_progress: ProgressCallback | None = None,
+    profile: VehicleProfile | None = None,
+    read_module_vins: bool = True,
 ) -> ScanResult:
-    """Discover every responding ECU and scan each in turn."""
+    """Discover every responding ECU and scan each in turn.
+
+    *profile* adds manufacturer-specific reads, including modules outside the OBD-II
+    address range. Without one, only the standardised layer is available -- which is
+    universal but shallow, and cannot reach the odometer.
+
+    *read_module_vins* asks each module for the standardised VIN identifier. One request
+    per module, and it is what makes the cross-module VIN comparison possible.
+    """
     started = datetime.now(UTC).isoformat(timespec="seconds")
     notes: list[str] = []
 
@@ -249,7 +284,17 @@ def scan_vehicle(
         report(f"module {index} of {len(addresses)} ({address})")
         channel = link.channel(address)
         client = Obd2Client(channel, database, timeout=timeout)
-        scans.append(scan_ecu(client, on_progress=on_progress))
+        scan = scan_ecu(client, on_progress=on_progress)
+        if read_module_vins:
+            scan.uds_vin = _read_module_vin(link, address, timeout=timeout)
+        scans.append(scan)
+
+    readings: list[ModuleReading] = []
+    if profile is not None:
+        report(f"reading manufacturer data ({profile.label})")
+        for ecu_profile in profile.ecus:
+            uds = UdsClient(link.channel(ecu_profile.address), timeout=timeout)
+            readings.append(read_module(uds, ecu_profile, on_progress=on_progress))
 
     report("evaluating findings")
     return ScanResult(
@@ -259,7 +304,25 @@ def scan_vehicle(
         ecus=tuple(scans),
         claimed_odometer_km=claimed_odometer_km,
         notes=tuple(notes),
+        profile_id=profile.id if profile else None,
+        profile_label=profile.label if profile else None,
+        module_readings=tuple(readings),
     )
+
+
+def _read_module_vin(link: CanLink, address: EcuAddress, *, timeout: float) -> str | None:
+    """Ask one module for the standardised VIN identifier (0xF190).
+
+    Standardised, so it needs no manufacturer definition. Plenty of modules do not
+    implement UDS at all and simply do not answer, which is not an error.
+    """
+    try:
+        client = UdsClient(link.channel(address), timeout=timeout)
+        raw = client.read_did(0xF190)
+    except (NoResponse, TransportError, UdsError):
+        return None
+    text = raw.decode("ascii", errors="replace").strip("\x00 ")
+    return text or None
 
 
 def _aggregate_monitors(ecus: tuple[EcuScan, ...]) -> dict[str, bool]:
@@ -339,5 +402,36 @@ def build_facts(result: ScanResult) -> dict[str, Any]:
     ]
     facts["mode06.failing_count"] = len(monitor_failures)
     facts["mode06.result_count"] = sum(len(ecu.monitor_results) for ecu in result.ecus)
+
+    facts.update(_uds_facts(result))
+    return facts
+
+
+def _uds_facts(result: ScanResult) -> dict[str, Any]:
+    """Facts from the manufacturer-specific and standardised-UDS layers."""
+    facts: dict[str, Any] = {}
+
+    # Cross-module VIN comparison. Standardised (identifier 0xF190), so this works
+    # without any manufacturer definition at all.
+    module_vins = {ecu.address.label: ecu.uds_vin for ecu in result.ecus if ecu.uds_vin}
+    if module_vins:
+        facts["uds.module_vin_count"] = len(module_vins)
+        reference = result.vin or next(iter(module_vins.values()))
+        facts["uds.vin_mismatch_count"] = sum(1 for vin in module_vins.values() if vin != reference)
+
+    if result.module_readings:
+        facts["profile.module_count"] = len(result.module_readings)
+        facts["profile.modules_reached"] = sum(
+            1 for reading in result.module_readings if reading.reached
+        )
+
+    odometers = result.odometer_by_module
+    if len(odometers) >= 2:
+        # Only meaningful with two or more sources. With one there is nothing to compare
+        # it against, and reporting a spread of zero would imply agreement that was
+        # never actually established.
+        facts["vehicle.odometer_module_count"] = len(odometers)
+        facts["vehicle.odometer_spread_km"] = max(odometers.values()) - min(odometers.values())
+        facts["vehicle.odometer_highest_km"] = max(odometers.values())
 
     return facts
