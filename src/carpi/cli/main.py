@@ -366,6 +366,15 @@ def list_scenarios() -> None:
         click.echo()
 
 
+# Registered here rather than defined in this module: the coding commands are the only
+# part of car-pi that can change a car, and they live where that is unmissable.
+def _register_vag_commands() -> None:
+    from carpi.cli.vag import coding, vag
+
+    cli.add_command(vag)
+    cli.add_command(coding)
+
+
 @cli.group()
 def uds() -> None:
     """Manufacturer-specific diagnostics over UDS (ISO 14229). Read-only.
@@ -780,6 +789,7 @@ def defs_facts(defs_path: Path | None) -> None:
 
 
 def main() -> int:
+    _register_vag_commands()
     try:
         cli.main(standalone_mode=False)
     except click.ClickException as exc:
@@ -788,6 +798,9 @@ def main() -> int:
     except click.Abort:
         return 130
     return 0
+
+
+_register_vag_commands()
 
 
 if __name__ == "__main__":

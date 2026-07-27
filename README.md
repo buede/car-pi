@@ -90,12 +90,55 @@ for how to contribute one — that is the highest-value thing anyone can add.
 from the inspection path — clearing codes destroys exactly the evidence above, and a
 tool that offers it one tap away from a report is a tool for sellers, not buyers.
 
+## Older VAG cars: KWP2000 over TP2.0
+
+VAG vehicles from roughly 2001 to 2010 — a Passat B6, for instance — do **not** use UDS
+over ISO-TP for manufacturer diagnostics. They use KWP2000 over **TP2.0**, VW's own
+connection-oriented transport, where the CAN IDs are negotiated per session rather than
+fixed. Generic OBD-II on the same car still works over ISO-TP because EOBD mandates it,
+which is exactly why a cheap dongle works while telling you almost nothing.
+
+```bash
+carpi vag modules                          # VCDS-style auto-scan by logical address
+carpi vag blocks  --module 0x17 --range 1-20   # measuring blocks
+carpi vag read    --module 0x17 --identifier 0x22
+```
+
+Fault codes come back as VAG's five-digit numbers (`16486`), not `P` codes, and
+measuring-block fields whose scaling formula is not recognised are shown as raw bytes
+rather than guessed at.
+
+## Coding
+
+**`carpi coding` is the only part of this that writes to a car.** Everything else is
+structurally incapable of it — the read-only clients refuse to emit a write service, and
+tests assert no module ever receives one.
+
+Coding is feasible on the KWP2000 era because a login is a five-digit code the module
+compares, not a cryptographic exchange. It is *not* feasible on a modern VAG: MQB-evo and
+MEB (roughly 2020+) use **SFD**, which needs a token signed by VW's servers, and that is
+not bypassable by anyone without them.
+
+Feasible is not safe, so:
+
+- **Airbag, ABS, steering, immobiliser and parking-brake modules are refused**, and there
+  is no flag to override it.
+- **The current value is archived to disk before any write.** If it cannot be archived,
+  the write does not happen.
+- **`plan` shows a decoded before-and-after and changes nothing.** `apply` requires you to
+  type the module's name — a y/n prompt can be answered without reading it.
+- **Supply voltage and vehicle speed are checked first.** A module interrupted mid-write by
+  a dying battery is the usual way one is destroyed.
+- **It is not exposed over the web interface, and will not be** — that server has no
+  authentication.
+
+`carpi coding restore --file <archived>` puts a module back.
+
 ## Honest limitations
 
-- **Coding/writing is gated by cryptography, not obscurity.** UDS Security Access
-  (service `0x27`) uses proprietary per-platform seed/key algorithms. On VAG
-  MQB-evo/MEB (roughly 2020+), **SFD** requires an online-signed token from VW.
-  That is not bypassable, by us or anyone else without VW's servers.
+- **TP2.0 and coding have never run on a real vehicle.** Both sides of the transport were
+  written from the same published specification, so the tests prove internal consistency,
+  not that a Passat agrees. Treat it as a careful hypothesis until confirmed.
 - Coverage for coding will always be per-make, per-platform, per-generation.
   Read-only diagnostics are the part that generalizes.
 - Toyota, Honda and Mazda expose very little configurable behaviour to begin with —

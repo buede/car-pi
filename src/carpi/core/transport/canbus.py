@@ -268,6 +268,25 @@ class CanLink:
             self._notifier.remove_listener(reader)
             reader.stop()
 
+    def attach_listener(self, listener: can.Listener) -> None:
+        """Register a listener for the link's lifetime.
+
+        :meth:`raw_reader` covers the usual case of watching the bus for a bounded
+        stretch. This exists for TP2.0, whose channels are connection-oriented and must
+        hold a reader across many requests -- longer than any ``with`` block would suit.
+        The caller is responsible for detaching it.
+        """
+        self._check_open()
+        self._notifier.add_listener(listener)
+
+    def detach_listener(self, listener: can.Listener) -> None:
+        """Remove a listener added with :meth:`attach_listener`. Safe after close()."""
+        try:
+            self._notifier.remove_listener(listener)
+        except (KeyError, ValueError):
+            # Already gone, or the notifier is stopped. Either way there is nothing to do.
+            log.debug("listener was not attached", exc_info=True)
+
     def send_raw(self, arbitration_id: int, data: bytes) -> None:
         """Send a single unsegmented frame.
 
