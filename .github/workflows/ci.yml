@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 3.11 is what Raspberry Pi OS Bookworm ships, so it is the version that
+          # actually matters. The others catch anything that will break on upgrade.
+          - { os: ubuntu-latest, python: "3.11" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: macos-latest, python: "3.11" }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Lint
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+
+      - name: Validate the definition database
+        run: carpi defs check
+
+      - name: Test
+        run: pytest -q
+
+      # Proves the packaged tool works end to end from a clean install, and that the
+      # definition files are actually included in the distribution -- a packaging
+      # mistake there would pass every unit test and fail on a real Pi.
+      - name: Smoke-test every scenario through the CLI
+        run: |
+          for scenario in $(carpi scenarios | grep -E '^[a-z]' ); do
+            echo "--- $scenario"
+            carpi demo --scenario "$scenario" --format json > "/tmp/$scenario.json"
+            python -c "
+          import json, sys
+          document = json.load(open('/tmp/$scenario.json'))
+          assert document['schema'] == 'carpi.inspection/1'
+          assert document['ecus'], 'no ECU answered'
+          print(' ', len(document['findings']), 'findings')
+          "
+          done
+
+  socketcan:
+    name: SocketCAN (vcan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # The virtual-bus tests cover the protocol logic, but a real vehicle is reached
+      # over SocketCAN with kernel ISO-TP. vcan exercises that path for real, so a
+      # regression in it is caught here rather than in a car park.
+      - name: Set up a virtual CAN interface
+        run: |
+          sudo modprobe vcan
+          sudo ip link add dev vcan0 type vcan
+          sudo ip link set up vcan0
+          ip -details link show vcan0
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Test over SocketCAN
+        env:
+          CARPI_TEST_SOCKETCAN: vcan0
+        run: pytest -q -m socketcan --no-header

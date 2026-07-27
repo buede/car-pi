@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Captured vehicle data. Raw logs contain the VIN, which identifies a real car
+# and its owner -- never commit these casually. Curated, VIN-scrubbed fixtures
+# belong in tests/fixtures/ and are committed deliberately.
+scans/
+*.candump
+*.asc
+*.blf

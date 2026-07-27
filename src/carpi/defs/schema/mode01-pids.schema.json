@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/buede/car-pi/schema/mode01-pids.schema.json",
+  "title": "OBD-II Mode 01/02 PID table",
+  "type": "object",
+  "required": ["meta", "pids"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": { "$ref": "#/$defs/meta" },
+    "pids": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/pid" }
+    }
+  },
+  "$defs": {
+    "confidence": {
+      "description": "How much the report engine should trust this entry. 'official' means taken from a published standard; 'verified' means confirmed against a real vehicle whose behaviour was known; 'community' means contributed but unconfirmed.",
+      "enum": ["community", "verified", "official"]
+    },
+    "meta": {
+      "type": "object",
+      "required": ["id", "title", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "source": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "pid": {
+      "type": "object",
+      "required": ["pid", "name", "label", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "name": {
+          "description": "Stable machine key. Rules reference PIDs by this name, so renaming one is a breaking change.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "label": { "type": "string" },
+        "bytes": {
+          "description": "Expected payload length. A response shorter than this is treated as a malformed answer rather than silently zero-padded.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "unit": { "type": "string" },
+        "formula": {
+          "description": "Arithmetic over A,B,C,D... (individual bytes), U (whole window as unsigned big-endian) and S (whole window as signed two's-complement).",
+          "type": "string"
+        },
+        "decoder": {
+          "description": "Name of a builtin decoder in carpi.core.protocol.decoders, for bitfields and enums that arithmetic cannot express.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "range": {
+          "description": "Physically plausible [min, max] after decoding. Values outside it are reported as suspect rather than as fact.",
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "note": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["formula"], "not": { "required": ["decoder"] } },
+        { "required": ["decoder"], "not": { "required": ["formula"] } }
+      ]
+    }
+  }
+}

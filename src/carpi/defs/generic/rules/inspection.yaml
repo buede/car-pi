@@ -1,0 +1,220 @@
+# Findings evaluated against a completed generic OBD-II scan.
+#
+# Available fact namespaces (see carpi.core.rules.facts):
+#   status.*     from Mode 01 PID 01 -- mil_on, dtc_count, ignition
+#   readiness.*  monitor completion counts and per-monitor detail
+#   dtc.*        counts from Modes 03 (stored), 07 (pending), 0A (permanent)
+#   pid.<name>   any decoded numeric Mode 01 PID, by its `name` in mode01-pids.yaml
+#   vehicle.*    VIN, and claimed_odometer_km if the operator supplied it
+#
+# A rule whose expression references a fact the scan did not produce is SKIPPED,
+# not evaluated as false. A car that refuses to answer must never be reported as
+# healthy on the strength of that silence.
+
+meta:
+  id: generic-inspection-rules
+  title: Generic OBD-II used-vehicle inspection findings
+  confidence: official
+  source: "SAE J1979 / ISO 15031-5 semantics; thresholds are project judgement"
+
+rules:
+  # --- Tamper and evidence-destruction detection ----------------------------
+
+  - id: permanent-dtcs-present
+    title: Permanent fault codes are stored
+    severity: critical
+    when: "dtc.permanent_count > 0"
+    explain: >
+      Permanent fault codes cannot be erased by any scan tool, including this one.
+      Only the ECU clears them, and only after the relevant self-test has passed
+      several times. Their presence means a real, recent, emissions-relevant fault
+      that has not yet been repaired and re-verified -- regardless of what the
+      dashboard warning light is currently doing. If the seller says the car has no
+      faults, this contradicts them directly.
+    confidence: official
+    references:
+      - "SAE J1979 Mode 0A"
+
+  - id: recent-code-clear
+    title: Fault codes appear to have been cleared very recently
+    severity: high
+    when: "readiness.incomplete_count >= 2 and dtc.stored_count == 0 and pid.distance_since_codes_cleared < 80"
+    explain: >
+      The car reports no stored faults, but several of its self-tests have not
+      finished running, and the ECU was last cleared under 80 km ago. That is the
+      signature of someone erasing fault codes shortly before a viewing: erasing
+      also resets the self-tests, and they take a mixture of town and motorway
+      driving to complete again. Drive the car at least 100 km in mixed conditions
+      and re-scan before committing to anything.
+    confidence: official
+    references:
+      - "SAE J1979 Mode 01 PID 01, PID 31"
+
+  - id: monitors-incomplete
+    title: Emissions self-tests have not completed
+    severity: medium
+    when: "readiness.incomplete_count >= 1 and pid.distance_since_codes_cleared >= 80"
+    explain: >
+      One or more emissions self-tests have not finished. Over 80 km since the last
+      clear this is less likely to be a deliberate wipe and more likely a
+      disconnected battery, a recent repair, or a monitor that genuinely cannot
+      complete because something is faulty. It also means the car would fail an
+      emissions test that requires readiness. Re-scan after more mixed driving; if a
+      monitor still refuses to complete, that monitor's subsystem is the suspect.
+    confidence: official
+
+  - id: dtc-count-disagreement
+    title: Reported fault count disagrees with the faults actually listed
+    severity: high
+    when: "status.dtc_count != dtc.stored_count"
+    explain: >
+      The ECU's own fault counter and the list of faults it returned do not match.
+      On a healthy car these always agree. Disagreement suggests a non-standard or
+      reprogrammed engine controller, or a device fitted between the port and the
+      bus that is filtering what diagnostic tools are allowed to see. Treat any
+      other clean-looking result from this car with suspicion.
+    confidence: community
+
+  - id: mil-off-but-faults-stored
+    title: Faults are stored but the warning light is off
+    severity: high
+    when: "status.mil_on == false and dtc.stored_count > 0"
+    explain: >
+      The car has stored fault codes, yet reports the dashboard warning light as
+      off. Some faults legitimately store without lighting the lamp, so this is not
+      proof of anything on its own. But combined with a bulb removed from the
+      cluster, or a warning-light suppressor fitted to the bus, it is how a car with
+      real problems is made to look clean. Confirm the lamp physically illuminates
+      during the ignition-on bulb check.
+    confidence: community
+
+  # --- Straightforward fault reporting --------------------------------------
+
+  - id: mil-on
+    title: Engine warning light is on
+    severity: high
+    when: "status.mil_on == true"
+    explain: >
+      The engine management light is commanded on, meaning the ECU has an active
+      emissions-relevant fault. Read the specific fault codes in this report for
+      what it is. Expect to negotiate on price or walk away, because a car sold with
+      this light on has not had the underlying problem diagnosed.
+    confidence: official
+
+  - id: mil-driven-far
+    title: The car has been driven a long way with the warning light on
+    severity: high
+    when: "pid.distance_with_mil_on > 500"
+    explain: >
+      The car has covered a substantial distance with the engine warning light
+      illuminated. Beyond the original fault, continuing to drive on a known fault
+      often causes secondary damage -- an ignored misfire destroys the catalytic
+      converter, an ignored sensor fault runs the engine rich and contaminates the
+      oil. This reflects how the car has been looked after, not just its current
+      state.
+    confidence: official
+
+  - id: pending-dtcs-present
+    title: Faults are maturing but have not yet triggered the warning light
+    severity: medium
+    when: "dtc.pending_count > 0"
+    explain: >
+      Pending codes are faults the ECU has seen once but not yet confirmed across
+      enough drive cycles to light the warning lamp. They are an early warning: if
+      the condition recurs, these become stored faults and the light comes on. Worth
+      knowing about before you buy rather than a week after.
+    confidence: official
+
+  # --- Mechanical health from live values -----------------------------------
+
+  - id: fuel-trim-excessive-bank1
+    title: Fuel trim on bank 1 is outside the normal range
+    severity: high
+    when: "abs(pid.ltft_bank1) > 10"
+    explain: >
+      Long-term fuel trim is how far the ECU has had to permanently shift fuelling
+      away from its baseline to keep the mixture correct. Beyond about 10 percent in
+      either direction something is mechanically wrong. Strongly positive means the
+      engine is running lean and being compensated -- typically an air leak, a tired
+      mass-airflow sensor, weak fuel delivery or a leaking exhaust before the oxygen
+      sensor. Strongly negative means running rich -- often leaking injectors or
+      excessive fuel pressure. This is one of the most useful single numbers on a
+      used petrol engine and sellers almost never know it exists.
+    confidence: official
+
+  - id: fuel-trim-excessive-bank2
+    title: Fuel trim on bank 2 is outside the normal range
+    severity: high
+    when: "abs(pid.ltft_bank2) > 10"
+    explain: >
+      As with bank 1, long-term fuel trim beyond roughly 10 percent indicates the
+      ECU is compensating for a mechanical problem. When only one bank of a V engine
+      is affected, the cause is usually specific to that side -- one bank's air
+      leak, injectors or oxygen sensor -- which is useful for narrowing down the
+      repair.
+    confidence: official
+
+  - id: fuel-trim-banks-diverge
+    title: The two cylinder banks need very different fuelling
+    severity: high
+    when: "abs(pid.ltft_bank1 - pid.ltft_bank2) > 10"
+    explain: >
+      The two banks of this engine require noticeably different fuel corrections.
+      Because both banks share fuel supply and air intake, a large split points to
+      something asymmetric: an air leak on one side, an injector problem, a failing
+      oxygen sensor, or in the worse case unequal compression between banks.
+    confidence: official
+
+  - id: coolant-not-reaching-temperature
+    title: Engine is not reaching normal operating temperature
+    severity: medium
+    when: "pid.run_time_since_start > 600 and pid.coolant_temp < 70"
+    explain: >
+      After ten minutes of running the coolant is still below 70 degrees C. The
+      usual cause is a thermostat stuck open, which is cheap to fix but worth
+      knowing. It matters beyond comfort: an engine that never warms up properly
+      runs rich, wears faster, contaminates its oil, and cannot complete several of
+      the emissions self-tests -- so it may also be masking other findings in this
+      report.
+    confidence: official
+
+  - id: control-module-voltage-low
+    title: Charging system voltage is low
+    severity: medium
+    when: "pid.run_time_since_start > 30 and pid.control_module_voltage < 13.0"
+    explain: >
+      With the engine running the electrical system should sit around 13.5 to 14.5
+      volts. A lower reading suggests a failing alternator, a poor earth, or a
+      battery on its way out. It also undermines the rest of this scan, because
+      several modules behave unpredictably on low voltage.
+    confidence: official
+
+  - id: control-module-voltage-high
+    title: Charging system voltage is high
+    severity: medium
+    when: "pid.run_time_since_start > 30 and pid.control_module_voltage > 15.2"
+    explain: >
+      Above roughly 15.2 volts the voltage regulator is likely failing.
+      Overcharging boils a battery dry and shortens the life of every electronic
+      module in the car, so this is worth fixing promptly rather than living with.
+    confidence: official
+
+  # --- Odometer plausibility ------------------------------------------------
+  # Only fires when the operator supplied the advertised mileage. The full
+  # cross-ECU odometer comparison needs manufacturer-specific reads and arrives
+  # with the vehicles/ definitions.
+
+  - id: odometer-disagrees-with-advertised
+    title: The car's own odometer disagrees with the advertised mileage
+    severity: critical
+    when: "abs(pid.odometer - vehicle.claimed_odometer_km) > 1000"
+    explain: >
+      The odometer value the powertrain controller reports differs from the mileage
+      you entered by more than 1000 km. Mileage tampering is usually done by
+      rewriting the instrument cluster only, leaving other modules holding the true
+      figure. Confirm which reading the dashboard shows, and treat a large
+      discrepancy as a reason to walk away rather than to negotiate -- it also
+      invalidates every service-interval assumption about the car.
+    confidence: verified
+    references:
+      - "SAE J1979 Mode 01 PID A6"

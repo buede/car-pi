@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carpi"
+version = "0.0.1"
+description = "Open-source vehicle diagnostics and coding hub for Raspberry Pi"
+readme = "README.md"
+# 3.11 is what Raspberry Pi OS Bookworm ships. Do not raise this without a
+# matching plan for the target image, even if your dev machine has something newer.
+requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "car-pi contributors" }]
+keywords = ["obd2", "obdii", "can", "canbus", "uds", "automotive", "diagnostics", "raspberry-pi"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering",
+  "Programming Language :: Python :: 3.11",
+]
+
+dependencies = [
+  "python-can>=4.3",
+  # PyPI name is can-isotp, import name is `isotp`. Provides both a portable
+  # userspace ISO-TP stack (works on macOS) and Linux kernel-socket bindings.
+  "can-isotp>=2.0",
+  "PyYAML>=6.0",
+  "jsonschema>=4.20",
+  "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/buede/car-pi"
+
+[project.scripts]
+carpi = "carpi.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"carpi.defs" = [
+  "schema/*.json",
+  "generic/*.yaml",
+  "generic/rules/*.yaml",
+  "vehicles/*/*/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# SocketCAN tests need a vcan interface, so they are excluded from the default run
+# and opted into with `pytest -m socketcan`.
+addopts = "-q -m 'not socketcan'"
+markers = [
+  "socketcan: requires a SocketCAN interface named by CARPI_TEST_SOCKETCAN",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

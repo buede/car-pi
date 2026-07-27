@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/buede/car-pi/schema/rules.schema.json",
+  "title": "car-pi findings rule file",
+  "description": "Checks evaluated against a completed scan. Rules are data so contributors can add checks without touching Python.",
+  "type": "object",
+  "required": ["meta", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["id", "title", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "source": { "type": "string" },
+        "note": { "type": "string" }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "confidence": { "enum": ["community", "verified", "official"] },
+    "rule": {
+      "type": "object",
+      "required": ["id", "title", "severity", "when", "explain"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": {
+          "description": "One-line finding headline shown in the report.",
+          "type": "string"
+        },
+        "severity": {
+          "description": "'critical' means walk away. 'high' means investigate or budget before buying. 'medium'/'low' are advisory. 'info' is context, not a defect.",
+          "enum": ["critical", "high", "medium", "low", "info"]
+        },
+        "when": {
+          "description": "Boolean expression over scan facts. If any fact it references is absent, the rule is skipped as inapplicable rather than evaluated as false -- a missing PID must never read as a clean bill of health.",
+          "type": "string"
+        },
+        "requires": {
+          "description": "Extra facts that must be present for applicability, for rules that reference a fact only inside one branch of the expression.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "explain": {
+          "description": "Plain-language explanation for a non-specialist buyer, including what to do next.",
+          "type": "string"
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "applies_to": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ignition": { "enum": ["spark", "compression"] },
+            "make": { "type": "string" },
+            "platform": { "type": "string" }
+          }
+        },
+        "references": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

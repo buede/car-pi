@@ -1,0 +1,649 @@
+# SAE J1979 / ISO 15031-5 Mode 01 (live data) and Mode 02 (freeze frame) PIDs.
+#
+# `formula` variables:
+#   A, B, C, D, ...  individual payload bytes, A = first
+#   U                whole payload window as unsigned big-endian integer
+#   S                whole payload window as signed (two's-complement) big-endian
+#
+# `decoder` names a builtin in carpi.core.protocol.decoders, for bitfields and
+# enums that arithmetic cannot express. Exactly one of formula/decoder is required.
+#
+# PIDs marked `confidence: community` are the ones to double-check against a real
+# vehicle before the report presents them as fact.
+
+meta:
+  id: generic-mode01-pids
+  title: SAE J1979 Mode 01/02 parameter IDs
+  confidence: official
+  source: "SAE J1979 / ISO 15031-5, Mode 01 service definitions"
+
+pids:
+  # --- Support bitmaps -------------------------------------------------------
+  # Each returns 4 bytes; the MSB of byte A is "next PID supported". If the last
+  # bit is set, the following bitmap PID exists too, which is how discovery walks
+  # the whole space without blindly probing 256 PIDs.
+  - pid: 0x00
+    name: supported_pids_01_20
+    label: PIDs supported 01-20
+    bytes: 4
+    decoder: pid_support_bitmap
+  - pid: 0x20
+    name: supported_pids_21_40
+    label: PIDs supported 21-40
+    bytes: 4
+    decoder: pid_support_bitmap
+  - pid: 0x40
+    name: supported_pids_41_60
+    label: PIDs supported 41-60
+    bytes: 4
+    decoder: pid_support_bitmap
+  - pid: 0x60
+    name: supported_pids_61_80
+    label: PIDs supported 61-80
+    bytes: 4
+    decoder: pid_support_bitmap
+  - pid: 0x80
+    name: supported_pids_81_a0
+    label: PIDs supported 81-A0
+    bytes: 4
+    decoder: pid_support_bitmap
+  - pid: 0xA0
+    name: supported_pids_a1_c0
+    label: PIDs supported A1-C0
+    bytes: 4
+    decoder: pid_support_bitmap
+
+  # --- Status and readiness --------------------------------------------------
+  # PID 01 is the single most important PID for used-car inspection: it carries
+  # the MIL state, the stored-DTC count, and the readiness monitors. See
+  # decoders.monitor_status -- the "not ready" bits are inverted, which is the
+  # classic place to get this wrong.
+  - pid: 0x01
+    name: monitor_status
+    label: Monitor status since DTCs cleared
+    bytes: 4
+    decoder: monitor_status
+  - pid: 0x41
+    name: monitor_status_drive_cycle
+    label: Monitor status this drive cycle
+    bytes: 4
+    decoder: monitor_status_drive_cycle
+  - pid: 0x02
+    name: freeze_frame_dtc
+    label: DTC that triggered the freeze frame
+    bytes: 2
+    decoder: dtc_pair
+  - pid: 0x03
+    name: fuel_system_status
+    label: Fuel system status
+    bytes: 2
+    decoder: fuel_system_status
+  - pid: 0x12
+    name: secondary_air_status
+    label: Commanded secondary air status
+    bytes: 1
+    decoder: secondary_air_status
+  - pid: 0x13
+    name: o2_sensors_present_2banks
+    label: O2 sensors present (2 banks)
+    bytes: 1
+    decoder: o2_sensors_present_2banks
+  - pid: 0x1D
+    name: o2_sensors_present_4banks
+    label: O2 sensors present (4 banks)
+    bytes: 1
+    decoder: o2_sensors_present_4banks
+  - pid: 0x1C
+    name: obd_standard
+    label: OBD standard this vehicle conforms to
+    bytes: 1
+    decoder: obd_standard
+  - pid: 0x1E
+    name: aux_input_status
+    label: Auxiliary input status
+    bytes: 1
+    decoder: aux_input_status
+  - pid: 0x51
+    name: fuel_type
+    label: Fuel type
+    bytes: 1
+    decoder: fuel_type
+
+  # --- Core engine parameters ------------------------------------------------
+  - pid: 0x04
+    name: engine_load
+    label: Calculated engine load
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x05
+    name: coolant_temp
+    label: Engine coolant temperature
+    bytes: 1
+    unit: "degC"
+    formula: "A - 40"
+    range: [-40, 215]
+  - pid: 0x0C
+    name: engine_rpm
+    label: Engine RPM
+    bytes: 2
+    unit: "rpm"
+    formula: "U / 4"
+    range: [0, 16383.75]
+  - pid: 0x0D
+    name: vehicle_speed
+    label: Vehicle speed
+    bytes: 1
+    unit: "km/h"
+    formula: "A"
+    range: [0, 255]
+  - pid: 0x0E
+    name: timing_advance
+    label: Timing advance before TDC
+    bytes: 1
+    unit: "deg"
+    formula: "A / 2 - 64"
+    range: [-64, 63.5]
+  - pid: 0x0F
+    name: intake_air_temp
+    label: Intake air temperature
+    bytes: 1
+    unit: "degC"
+    formula: "A - 40"
+    range: [-40, 215]
+  - pid: 0x10
+    name: maf_rate
+    label: Mass air flow rate
+    bytes: 2
+    unit: "g/s"
+    formula: "U / 100"
+    range: [0, 655.35]
+  - pid: 0x11
+    name: throttle_position
+    label: Throttle position
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x0B
+    name: intake_manifold_pressure
+    label: Intake manifold absolute pressure
+    bytes: 1
+    unit: "kPa"
+    formula: "A"
+    range: [0, 255]
+  - pid: 0x33
+    name: barometric_pressure
+    label: Absolute barometric pressure
+    bytes: 1
+    unit: "kPa"
+    formula: "A"
+    range: [0, 255]
+  - pid: 0x1F
+    name: run_time_since_start
+    label: Run time since engine start
+    bytes: 2
+    unit: "s"
+    formula: "U"
+    range: [0, 65535]
+  - pid: 0x5C
+    name: engine_oil_temp
+    label: Engine oil temperature
+    bytes: 1
+    unit: "degC"
+    formula: "A - 40"
+    range: [-40, 215]
+  - pid: 0x42
+    name: control_module_voltage
+    label: Control module supply voltage
+    bytes: 2
+    unit: "V"
+    formula: "U / 1000"
+    range: [0, 65.535]
+  - pid: 0x43
+    name: absolute_load
+    label: Absolute load value
+    bytes: 2
+    unit: "%"
+    formula: "U * 100 / 255"
+    range: [0, 25700]
+  - pid: 0x46
+    name: ambient_air_temp
+    label: Ambient air temperature
+    bytes: 1
+    unit: "degC"
+    formula: "A - 40"
+    range: [-40, 215]
+
+  # --- Fuel trims ------------------------------------------------------------
+  # Trims are the cheapest window into mechanical health. Large positive long-term
+  # trim at idle but near-zero at cruise is the classic vacuum-leak signature;
+  # large positive at both suggests fuelling or MAF. Rules in generic/rules/ read
+  # these, so the names are load-bearing.
+  - pid: 0x06
+    name: stft_bank1
+    label: Short term fuel trim, bank 1
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 128 - 100"
+    range: [-100, 99.2]
+  - pid: 0x07
+    name: ltft_bank1
+    label: Long term fuel trim, bank 1
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 128 - 100"
+    range: [-100, 99.2]
+  - pid: 0x08
+    name: stft_bank2
+    label: Short term fuel trim, bank 2
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 128 - 100"
+    range: [-100, 99.2]
+  - pid: 0x09
+    name: ltft_bank2
+    label: Long term fuel trim, bank 2
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 128 - 100"
+    range: [-100, 99.2]
+
+  # --- Fuel system pressures -------------------------------------------------
+  - pid: 0x0A
+    name: fuel_pressure
+    label: Fuel pressure (gauge)
+    bytes: 1
+    unit: "kPa"
+    formula: "A * 3"
+    range: [0, 765]
+  - pid: 0x22
+    name: fuel_rail_pressure_relative
+    label: Fuel rail pressure relative to manifold vacuum
+    bytes: 2
+    unit: "kPa"
+    formula: "U * 0.079"
+    range: [0, 5177.265]
+  - pid: 0x23
+    name: fuel_rail_gauge_pressure
+    label: Fuel rail gauge pressure (diesel or direct injection)
+    bytes: 2
+    unit: "kPa"
+    formula: "U * 10"
+    range: [0, 655350]
+  - pid: 0x59
+    name: fuel_rail_absolute_pressure
+    label: Fuel rail absolute pressure
+    bytes: 2
+    unit: "kPa"
+    formula: "U * 10"
+    range: [0, 655350]
+  - pid: 0x2F
+    name: fuel_tank_level
+    label: Fuel tank level input
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x52
+    name: ethanol_fuel_percent
+    label: Ethanol fuel percentage
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x5E
+    name: engine_fuel_rate
+    label: Engine fuel rate
+    bytes: 2
+    unit: "L/h"
+    formula: "U / 20"
+    range: [0, 3276.75]
+  - pid: 0x5D
+    name: fuel_injection_timing
+    label: Fuel injection timing
+    bytes: 2
+    unit: "deg"
+    formula: "U / 128 - 210"
+    range: [-210, 301.992]
+
+  # --- Emissions control -----------------------------------------------------
+  - pid: 0x2C
+    name: commanded_egr
+    label: Commanded EGR
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x2D
+    name: egr_error
+    label: EGR error
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 128 - 100"
+    range: [-100, 99.2]
+  - pid: 0x2E
+    name: commanded_evap_purge
+    label: Commanded evaporative purge
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x32
+    name: evap_vapor_pressure
+    label: Evaporative system vapour pressure
+    bytes: 2
+    unit: "Pa"
+    formula: "S / 4"
+    range: [-8192, 8191.75]
+  - pid: 0x44
+    name: commanded_afr_equiv_ratio
+    label: Commanded air-fuel equivalence ratio (lambda)
+    bytes: 2
+    unit: "ratio"
+    formula: "U / 32768"
+    range: [0, 1.999]
+
+  # --- Catalyst temperatures -------------------------------------------------
+  - pid: 0x3C
+    name: catalyst_temp_b1s1
+    label: Catalyst temperature, bank 1 sensor 1
+    bytes: 2
+    unit: "degC"
+    formula: "U / 10 - 40"
+    range: [-40, 6513.5]
+  - pid: 0x3D
+    name: catalyst_temp_b2s1
+    label: Catalyst temperature, bank 2 sensor 1
+    bytes: 2
+    unit: "degC"
+    formula: "U / 10 - 40"
+    range: [-40, 6513.5]
+  - pid: 0x3E
+    name: catalyst_temp_b1s2
+    label: Catalyst temperature, bank 1 sensor 2
+    bytes: 2
+    unit: "degC"
+    formula: "U / 10 - 40"
+    range: [-40, 6513.5]
+  - pid: 0x3F
+    name: catalyst_temp_b2s2
+    label: Catalyst temperature, bank 2 sensor 2
+    bytes: 2
+    unit: "degC"
+    formula: "U / 10 - 40"
+    range: [-40, 6513.5]
+
+  # --- Oxygen sensors --------------------------------------------------------
+  # 0x14-0x1B: byte A is sensor voltage, byte B is the associated short-term trim.
+  # B == 0xFF means the trim is not used by this sensor.
+  - pid: 0x14
+    name: o2_b1s1
+    label: O2 sensor bank 1 sensor 1
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x15
+    name: o2_b1s2
+    label: O2 sensor bank 1 sensor 2
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x16
+    name: o2_b1s3
+    label: O2 sensor bank 1 sensor 3
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x17
+    name: o2_b1s4
+    label: O2 sensor bank 1 sensor 4
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x18
+    name: o2_b2s1
+    label: O2 sensor bank 2 sensor 1
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x19
+    name: o2_b2s2
+    label: O2 sensor bank 2 sensor 2
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x1A
+    name: o2_b2s3
+    label: O2 sensor bank 2 sensor 3
+    bytes: 2
+    decoder: o2_voltage_trim
+  - pid: 0x1B
+    name: o2_b2s4
+    label: O2 sensor bank 2 sensor 4
+    bytes: 2
+    decoder: o2_voltage_trim
+
+  # 0x24-0x2B: wide-band. AB is lambda, CD is sensor voltage.
+  - pid: 0x24
+    name: o2_wr_b1s1
+    label: O2 wide-range sensor bank 1 sensor 1 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x25
+    name: o2_wr_b1s2
+    label: O2 wide-range sensor bank 1 sensor 2 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x26
+    name: o2_wr_b1s3
+    label: O2 wide-range sensor bank 1 sensor 3 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x27
+    name: o2_wr_b1s4
+    label: O2 wide-range sensor bank 1 sensor 4 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x28
+    name: o2_wr_b2s1
+    label: O2 wide-range sensor bank 2 sensor 1 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x29
+    name: o2_wr_b2s2
+    label: O2 wide-range sensor bank 2 sensor 2 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x2A
+    name: o2_wr_b2s3
+    label: O2 wide-range sensor bank 2 sensor 3 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+  - pid: 0x2B
+    name: o2_wr_b2s4
+    label: O2 wide-range sensor bank 2 sensor 4 (lambda, voltage)
+    bytes: 4
+    decoder: o2_lambda_voltage
+
+  # 0x34-0x3B: wide-band. AB is lambda, CD is sensor current in mA.
+  - pid: 0x34
+    name: o2_wr_current_b1s1
+    label: O2 wide-range sensor bank 1 sensor 1 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x35
+    name: o2_wr_current_b1s2
+    label: O2 wide-range sensor bank 1 sensor 2 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x36
+    name: o2_wr_current_b1s3
+    label: O2 wide-range sensor bank 1 sensor 3 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x37
+    name: o2_wr_current_b1s4
+    label: O2 wide-range sensor bank 1 sensor 4 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x38
+    name: o2_wr_current_b2s1
+    label: O2 wide-range sensor bank 2 sensor 1 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x39
+    name: o2_wr_current_b2s2
+    label: O2 wide-range sensor bank 2 sensor 2 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x3A
+    name: o2_wr_current_b2s3
+    label: O2 wide-range sensor bank 2 sensor 3 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+  - pid: 0x3B
+    name: o2_wr_current_b2s4
+    label: O2 wide-range sensor bank 2 sensor 4 (lambda, current)
+    bytes: 4
+    decoder: o2_lambda_current
+
+  # --- Distance and time since codes cleared ---------------------------------
+  # These four are the backbone of recent-code-clear detection. A seller who wiped
+  # the codes an hour ago cannot fake them, because the ECU owns the counters.
+  - pid: 0x21
+    name: distance_with_mil_on
+    label: Distance travelled with MIL on
+    bytes: 2
+    unit: "km"
+    formula: "U"
+    range: [0, 65535]
+  - pid: 0x30
+    name: warmups_since_codes_cleared
+    label: Warm-ups since codes cleared
+    bytes: 1
+    unit: "count"
+    formula: "A"
+    range: [0, 255]
+  - pid: 0x31
+    name: distance_since_codes_cleared
+    label: Distance travelled since codes cleared
+    bytes: 2
+    unit: "km"
+    formula: "U"
+    range: [0, 65535]
+  - pid: 0x4D
+    name: time_with_mil_on
+    label: Time run with MIL on
+    bytes: 2
+    unit: "min"
+    formula: "U"
+    range: [0, 65535]
+  - pid: 0x4E
+    name: time_since_codes_cleared
+    label: Time since codes cleared
+    bytes: 2
+    unit: "min"
+    formula: "U"
+    range: [0, 65535]
+
+  # --- Throttle and pedal ----------------------------------------------------
+  - pid: 0x45
+    name: relative_throttle_position
+    label: Relative throttle position
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x47
+    name: absolute_throttle_position_b
+    label: Absolute throttle position B
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x48
+    name: absolute_throttle_position_c
+    label: Absolute throttle position C
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x49
+    name: accelerator_pedal_d
+    label: Accelerator pedal position D
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x4A
+    name: accelerator_pedal_e
+    label: Accelerator pedal position E
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x4B
+    name: accelerator_pedal_f
+    label: Accelerator pedal position F
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x4C
+    name: commanded_throttle_actuator
+    label: Commanded throttle actuator
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+  - pid: 0x5A
+    name: relative_accelerator_pedal_position
+    label: Relative accelerator pedal position
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+
+  # --- Torque ----------------------------------------------------------------
+  - pid: 0x61
+    name: driver_demand_torque
+    label: Driver's demand engine torque, percent of reference
+    bytes: 1
+    unit: "%"
+    formula: "A - 125"
+    range: [-125, 130]
+  - pid: 0x62
+    name: actual_engine_torque
+    label: Actual engine torque, percent of reference
+    bytes: 1
+    unit: "%"
+    formula: "A - 125"
+    range: [-125, 130]
+  - pid: 0x63
+    name: engine_reference_torque
+    label: Engine reference torque
+    bytes: 2
+    unit: "Nm"
+    formula: "U"
+    range: [0, 65535]
+
+  # --- Hybrid and odometer ---------------------------------------------------
+  - pid: 0x5B
+    name: hybrid_battery_remaining_life
+    label: Hybrid/EV battery pack remaining life
+    bytes: 1
+    unit: "%"
+    formula: "A * 100 / 255"
+    range: [0, 100]
+    note: >
+      A coarse manufacturer-computed figure. Real hybrid battery assessment needs
+      per-block voltages from the HV ECU via manufacturer DIDs, not this PID.
+
+  # Generic odometer, added in a later J1979 revision. Present on roughly 2019+
+  # vehicles only. Where it exists it is extremely useful, because it gives a
+  # standardised second opinion against the instrument cluster reading without
+  # needing any manufacturer-specific definition.
+  - pid: 0xA6
+    name: odometer
+    label: Odometer
+    bytes: 4
+    unit: "km"
+    formula: "U / 10"
+    range: [0, 429496729.5]
+    confidence: verified
