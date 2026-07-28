@@ -168,7 +168,7 @@ def bench() -> None:
     """Exercise the stack over real CAN hardware, with no vehicle attached.
 
     Needs two CAN nodes wired together, each with a 120 ohm terminator at its own end.
-    See hardware/README.md.
+    See docs/bring-up-a-new-board.md.
 
     This is what validates the parts the virtual-bus tests cannot reach: bit timing,
     frame pacing, and TP2.0's negotiated timing and keepalive.

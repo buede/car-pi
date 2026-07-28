@@ -322,7 +322,8 @@ def serve(
     """Serve the web UI, for use from a phone.
 
     Defaults to 127.0.0.1 so an unconfigured run is not reachable from the network.
-    The portable unit binds its hotspot interface instead -- see deploy/.
+    The portable unit binds its hotspot interface instead -- see
+    docs/build-the-field-unit.md.
 
     The interface is used by one conversation at a time. A second inspection, or live
     values during an inspection, is refused rather than queued: two request/response
