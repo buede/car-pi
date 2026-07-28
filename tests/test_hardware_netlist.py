@@ -19,7 +19,10 @@ from pathlib import Path
 
 import pytest
 
-NETLIST = Path(__file__).resolve().parents[1] / "hardware" / "carpi-can.net"
+REPO = Path(__file__).resolve().parents[1]
+NETLIST = REPO / "hardware" / "carpi-can.net"
+# The build guide lives in docs/; the netlist stays beside the thing it describes.
+BUILD_GUIDE = REPO / "docs" / "build-the-can-interface.md"
 
 # Pin counts by package, so a missing or invented pin is caught.
 PIN_COUNTS = {
@@ -210,11 +213,11 @@ class TestDocumentation:
         """Nobody should discover that from a smell of hot plastic."""
         assert "NOT YET BUILT" in netlist
 
-    def test_the_readme_covers_the_crystal_trap(self) -> None:
-        readme = (NETLIST.parent / "README.md").read_text(encoding="utf-8")
-        assert "crystal" in readme.lower()
-        assert "oscillator=16000000" in readme
+    def test_the_build_guide_covers_the_crystal_trap(self) -> None:
+        guide = BUILD_GUIDE.read_text(encoding="utf-8")
+        assert "crystal" in guide.lower()
+        assert "oscillator=16000000" in guide
 
-    def test_the_readme_warns_off_the_cheap_module(self) -> None:
-        readme = (NETLIST.parent / "README.md").read_text(encoding="utf-8")
-        assert "MCP2551" in readme, "the 5V-transceiver trap should be documented"
+    def test_the_build_guide_warns_off_the_cheap_module(self) -> None:
+        guide = BUILD_GUIDE.read_text(encoding="utf-8")
+        assert "MCP2551" in guide, "the 5V-transceiver trap should be documented"

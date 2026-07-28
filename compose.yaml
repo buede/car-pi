@@ -56,7 +56,7 @@ services:
   serve:
     <<: *dev
     # 0.0.0.0 inside the container so the published port reaches it. On a real Pi the
-    # server binds the hotspot interface instead; see deploy/.
+    # server binds the hotspot interface instead; see docs/build-the-field-unit.md.
     command:
       - carpi
       - serve

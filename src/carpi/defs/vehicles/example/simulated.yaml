@@ -10,7 +10,7 @@
 # The identifiers below are deliberately absurd -- 0xCAFE is not a real manufacturer
 # data identifier and no vehicle answers it. Anyone copying this file as a starting point
 # should be in no doubt that the numbers have to be replaced with ones confirmed against
-# a real car. See ../README.md for how.
+# a real car. See docs/contribute-vehicle-data.md for how.
 
 meta:
   id: example-simulated

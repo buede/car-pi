@@ -1,7 +1,7 @@
 (export (version "E")
   (design
     (source "carpi-can")
-    (tool "hand-written; see hardware/README.md")
+    (tool "hand-written; see docs/build-the-can-interface.md")
     (sheet (number "1") (name "/") (tstamps "/")
       (title_block
         (title "car-pi MCP2515 CAN interface")
