@@ -22,8 +22,9 @@ What it can and cannot do
 -------------------------
 Coding on the KWP2000 era is genuinely feasible: a login is a five-digit code compared
 by the module, not a cryptographic seed/key exchange, and a coding value is a handful of
-bytes written by ``WriteDataByLocalIdentifier``. That is why this is possible on a 2006
-Passat and impossible on a 2021 one, where SFD requires a token signed by VW.
+bytes written by ``WriteDataByLocalIdentifier``. That is why this is possible on a
+KWP2000-era VAG vehicle and impossible on a modern one, where SFD requires a token
+signed by VW.
 
 Feasible is not the same as safe. Writing a wrong value to a module can leave it
 unusable, and some modules should not be written at all from a hobby tool. So:

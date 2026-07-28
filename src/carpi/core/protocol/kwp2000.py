@@ -1,6 +1,6 @@
 """Keyword Protocol 2000 (ISO 14230), read-only subset, as VAG uses it.
 
-KWP2000 is what VAG modules speak before UDS arrived -- on a 2006 Passat, everything the
+KWP2000 is what VAG modules speak before UDS arrived -- on these vehicles, everything the
 manufacturer's tool does goes through this. Structurally it is UDS's predecessor and the
 family resemblance is strong: a service byte, a positive response of service + 0x40, and
 negative responses of ``7F <service> <code>``.

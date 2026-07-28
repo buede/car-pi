@@ -7,9 +7,10 @@ prove only that the code agrees with itself -- the same trap the OBD-II encoders
 :mod:`carpi.sim.encode` avoid.
 
 That still leaves a real limit worth stating plainly: **both sides were written from the
-same document by the same author.** A shared misreading of the specification would pass
-every test here and fail on a 2006 Passat. These tests establish internal consistency and
-catch regressions; only the car establishes correctness.
+same document, with no independently built implementation to check either against.** A
+shared misreading of the specification would pass every test here and fail on a real
+vehicle. These tests establish internal consistency and catch regressions; only the car
+establishes correctness.
 """
 
 from __future__ import annotations

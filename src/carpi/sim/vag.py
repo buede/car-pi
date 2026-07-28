@@ -1,4 +1,4 @@
-"""A simulated VAG car of the KWP2000 era, roughly a Passat B6.
+"""A simulated VAG car of the KWP2000 era (roughly 2001-2010).
 
 Enough modules to exercise the whole path: a cluster whose odometer disagrees with the
 engine's, a comfort module that can be coded, and an airbag controller that exists so
@@ -6,7 +6,7 @@ tests can prove the coding path refuses to touch it.
 
 The measuring-block contents and local identifiers are invented. They are shaped like a
 real car's -- the right services, the right refusals, the right module addresses -- but no
-value here is claimed to be what a real Passat returns. The point is to exercise the
+value here is claimed to be what a real vehicle returns. The point is to exercise the
 machinery, not to stand in for a definition.
 """
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from carpi.sim.tp20 import SimulatedTp20Module
 
-__all__ = ["passat_b6_modules"]
+__all__ = ["kwp2000_era_modules"]
 
 # Invented, but plausible in shape: VAG part numbers look like this.
 _CLUSTER_ID = b"\x03\x1a\x80" + b"3C0920870A  KOMBIINSTRUMENT VDD "[:29]
@@ -22,7 +22,7 @@ _ENGINE_ID = b"\x03\x1a\x80" + b"03G906021KL  R4 2.0L TDI    G000"[:29]
 _COMFORT_ID = b"\x03\x1a\x80" + b"3C0959433A  KOMFORTGERAET  H07 "[:29]
 
 
-def passat_b6_modules() -> list[SimulatedTp20Module]:
+def kwp2000_era_modules() -> list[SimulatedTp20Module]:
     """The simulated module set. Fresh objects each call, so tests do not share state."""
     return [
         SimulatedTp20Module(

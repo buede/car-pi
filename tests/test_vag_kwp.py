@@ -1,8 +1,9 @@
 """TP2.0 and KWP2000, against a simulated VAG car of the KWP2000 era.
 
 A limit worth restating: both sides of this were written from the same protocol
-description by the same author, so these tests establish internal consistency and catch
-regressions. They do not establish that a 2006 Passat agrees. Only the car does that.
+description, with no independently built implementation to check either against, so
+these tests establish internal consistency and catch regressions. They do not establish
+that a real vehicle agrees. Only the car does that.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from carpi.core.transport.tp20 import (
     open_tp20_channel,
 )
 from carpi.sim.tp20 import Tp20Responder
-from carpi.sim.vag import passat_b6_modules
+from carpi.sim.vag import kwp2000_era_modules
 
 ENGINE = 0x01
 CLUSTER = 0x17
@@ -38,10 +39,10 @@ AIRBAG = 0x15
 
 
 @pytest.fixture
-def passat() -> Iterator[tuple[Tp20Responder, CanLink]]:
-    """A simulated Passat-era car. Fresh per test, so writes do not leak between them."""
+def vag_car() -> Iterator[tuple[Tp20Responder, CanLink]]:
+    """A simulated KWP2000-era VAG car. Fresh per test, so writes do not leak between them."""
     bus = can.interface.Bus(interface="virtual", channel="carpi-vag-test")
-    responder = Tp20Responder(bus, passat_b6_modules())
+    responder = Tp20Responder(bus, kwp2000_era_modules())
     responder.start()
     try:
         with CanLink.open("virtual", "carpi-vag-test") as link:
@@ -59,8 +60,8 @@ def _client(link: CanLink, address: int) -> tuple[object, KwpClient]:
 
 
 class TestChannelSetup:
-    def test_opens_a_channel_to_a_present_module(self, passat) -> None:
-        _, link = passat
+    def test_opens_a_channel_to_a_present_module(self, vag_car) -> None:
+        _, link = vag_car
         channel = open_tp20_channel(link, CLUSTER, timeout=1.0)
         try:
             assert channel.logical_address == CLUSTER
@@ -68,15 +69,15 @@ class TestChannelSetup:
         finally:
             channel.close()
 
-    def test_an_absent_module_does_not_answer(self, passat) -> None:
+    def test_an_absent_module_does_not_answer(self, vag_car) -> None:
         """Silence, exactly as on a real bus -- which is why a scan has to try each one."""
-        _, link = passat
+        _, link = vag_car
         with pytest.raises((NoResponse, Tp20Error)):
             open_tp20_channel(link, 0x37, timeout=0.4)
 
-    def test_ids_are_negotiated_not_fixed(self, passat) -> None:
+    def test_ids_are_negotiated_not_fixed(self, vag_car) -> None:
         """The reason an arbitration-ID sweep cannot find these modules."""
-        _, link = passat
+        _, link = vag_car
         first = open_tp20_channel(link, ENGINE, timeout=1.0)
         second = open_tp20_channel(link, CLUSTER, timeout=1.0)
         try:
@@ -85,8 +86,8 @@ class TestChannelSetup:
             first.close()
             second.close()
 
-    def test_out_of_range_address_is_rejected_locally(self, passat) -> None:
-        _, link = passat
+    def test_out_of_range_address_is_rejected_locally(self, vag_car) -> None:
+        _, link = vag_car
         with pytest.raises(Tp20Error, match="out of range"):
             open_tp20_channel(link, 0x1FF, timeout=0.2)
 
@@ -98,9 +99,9 @@ class TestChannelSetup:
 
 
 class TestSegmentation:
-    def test_a_multi_frame_reply_is_reassembled(self, passat) -> None:
+    def test_a_multi_frame_reply_is_reassembled(self, vag_car) -> None:
         """Identification is around 32 bytes, so it cannot fit one frame."""
-        _, link = passat
+        _, link = vag_car
         channel, client = _client(link, CLUSTER)
         try:
             identity = client.identification()
@@ -109,17 +110,17 @@ class TestSegmentation:
         finally:
             channel.close()
 
-    def test_a_short_reply_still_works(self, passat) -> None:
-        _, link = passat
+    def test_a_short_reply_still_works(self, vag_car) -> None:
+        _, link = vag_car
         channel, client = _client(link, CLUSTER)
         try:
             assert client.tester_present() is True
         finally:
             channel.close()
 
-    def test_sequential_requests_stay_in_step(self, passat) -> None:
+    def test_sequential_requests_stay_in_step(self, vag_car) -> None:
         """Sequence numbers advance, so a desync would show up as a wrong answer."""
-        _, link = passat
+        _, link = vag_car
         channel, client = _client(link, ENGINE)
         try:
             for _ in range(6):
@@ -131,8 +132,8 @@ class TestSegmentation:
 
 
 class TestReads:
-    def test_measuring_block_decoding(self, passat) -> None:
-        _, link = passat
+    def test_measuring_block_decoding(self, vag_car) -> None:
+        _, link = vag_car
         channel, client = _client(link, ENGINE)
         try:
             block = client.read_measuring_block(1)
@@ -150,25 +151,25 @@ class TestReads:
         assert value.value is None
         assert "not decoded" in str(value)
 
-    def test_vag_fault_codes_are_five_digit(self, passat) -> None:
+    def test_vag_fault_codes_are_five_digit(self, vag_car) -> None:
         """VAG shows 16486, not P0300, so they need their own presentation."""
-        _, link = passat
+        _, link = vag_car
         channel, client = _client(link, ENGINE)
         try:
             assert client.read_dtcs() == ["16486"]
         finally:
             channel.close()
 
-    def test_a_module_with_no_faults_returns_nothing(self, passat) -> None:
-        _, link = passat
+    def test_a_module_with_no_faults_returns_nothing(self, vag_car) -> None:
+        _, link = vag_car
         channel, client = _client(link, CLUSTER)
         try:
             assert client.read_dtcs() == []
         finally:
             channel.close()
 
-    def test_unknown_identifier_is_refused(self, passat) -> None:
-        _, link = passat
+    def test_unknown_identifier_is_refused(self, vag_car) -> None:
+        _, link = vag_car
         channel, client = _client(link, CLUSTER)
         try:
             with pytest.raises(KwpNegativeResponse) as info:
@@ -179,9 +180,9 @@ class TestReads:
 
 
 class TestCrossModuleOdometer:
-    def test_the_cluster_and_engine_disagree(self, passat) -> None:
+    def test_the_cluster_and_engine_disagree(self, vag_car) -> None:
         """The tampering signature: only the cluster gets rewritten."""
-        _, link = passat
+        _, link = vag_car
         readings = {}
         for address in (ENGINE, CLUSTER):
             channel, client = _client(link, address)
@@ -210,8 +211,8 @@ class TestNothingHereCanWrite:
         assert suspicious == []
 
     @pytest.mark.parametrize("service", sorted(FORBIDDEN_SERVICES))
-    def test_the_client_refuses_to_emit_a_write_service(self, passat, service: int) -> None:
-        _, link = passat
+    def test_the_client_refuses_to_emit_a_write_service(self, vag_car, service: int) -> None:
+        _, link = vag_car
         channel, client = _client(link, COMFORT)
         try:
             with pytest.raises(KwpError, match="read-only"):
@@ -219,8 +220,8 @@ class TestNothingHereCanWrite:
         finally:
             channel.close()
 
-    def test_no_module_receives_a_write_during_a_read_session(self, passat) -> None:
-        responder, link = passat
+    def test_no_module_receives_a_write_during_a_read_session(self, vag_car) -> None:
+        responder, link = vag_car
         channel, client = _client(link, COMFORT)
         try:
             client.identification()

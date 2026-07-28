@@ -48,10 +48,10 @@ def _link(transport: str, channel: str | None, bitrate: int, fd: bool) -> Iterat
         import can
 
         from carpi.sim.tp20 import Tp20Responder
-        from carpi.sim.vag import passat_b6_modules
+        from carpi.sim.vag import kwp2000_era_modules
 
         bus = can.interface.Bus(interface="virtual", channel=_SIM_CHANNEL)
-        responder = Tp20Responder(bus, passat_b6_modules())
+        responder = Tp20Responder(bus, kwp2000_era_modules())
         responder.start()
         try:
             with CanLink.open("virtual", _SIM_CHANNEL) as link:
@@ -88,7 +88,7 @@ def _with_bus(command):
 def vag() -> None:
     """VAG diagnostics over KWP2000 on TP2.0. Read-only.
 
-    For VAG vehicles of roughly 2001-2010, including the Passat B6. These cars carry
+    For VAG vehicles of roughly 2001-2010. These cars carry
     manufacturer diagnostics over VW's own TP2.0 transport, not ISO-TP, so the UDS
     commands will not find their modules -- generic OBD-II still works, but it only ever
     sees the emissions modules.

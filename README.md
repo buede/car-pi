@@ -92,7 +92,7 @@ tool that offers it one tap away from a report is a tool for sellers, not buyers
 
 ## Older VAG cars: KWP2000 over TP2.0
 
-VAG vehicles from roughly 2001 to 2010 — a Passat B6, for instance — do **not** use UDS
+VAG vehicles from roughly 2001 to 2010 do **not** use UDS
 over ISO-TP for manufacturer diagnostics. They use KWP2000 over **TP2.0**, VW's own
 connection-oriented transport, where the CAN IDs are negotiated per session rather than
 fixed. Generic OBD-II on the same car still works over ISO-TP because EOBD mandates it,
@@ -138,7 +138,7 @@ Feasible is not safe, so:
 
 - **TP2.0 and coding have never run on a real vehicle.** Both sides of the transport were
   written from the same published specification, so the tests prove internal consistency,
-  not that a Passat agrees. Treat it as a careful hypothesis until confirmed.
+  not that a real vehicle agrees. Treat it as a careful hypothesis until confirmed.
 - Coverage for coding will always be per-make, per-platform, per-generation.
   Read-only diagnostics are the part that generalizes.
 - Toyota, Honda and Mazda expose very little configurable behaviour to begin with —
@@ -219,8 +219,8 @@ Portable inspection unit, roughly €100:
 | Power | USB-C PD power bank | See below |
 | Harness | OBD-II (J1962) male pigtail | CAN_H = pin 6, CAN_L = pin 14, GND = pin 4 or 5 |
 
-**On a pre-2019 car, build the interface instead.** CAN FD did not exist in 2006, so on a
-Passat B6 the CAN FD HAT is paying for a feature the car cannot use. An MCP2515 plus a
+**On a pre-2019 car, build the interface instead.** CAN FD is a recent addition, so on an
+older car the CAN FD HAT is paying for a feature the car cannot use. An MCP2515 plus a
 3.3 V SN65HVD230 transceiver costs about €5, needs no custom software, and is fully
 adequate — see [`hardware/README.md`](hardware/README.md) for the wiring, the netlist, and
 the two traps that catch most hand-built boards.

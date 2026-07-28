@@ -6,9 +6,9 @@
 > against the datasheets before you solder, and the bring-up sequence below is designed to
 > catch a mistake before it reaches a car. Corrections very welcome.
 
-A hand-built CAN interface costs about €5 and is *fully adequate* for a 2006 Passat.
-CAN FD did not exist in 2006, so the CAN FD HAT that would otherwise be worth buying is
-paying for a feature that car cannot use.
+A hand-built CAN interface costs about €5 and is *fully adequate* for a pre-2019 car.
+CAN FD is a recent addition, so on an older vehicle the CAN FD HAT that would otherwise
+be worth buying is paying for a feature that car cannot use.
 
 ## Why these parts
 
@@ -78,7 +78,7 @@ Skipping these is how a board works on the bench and fails in a car.
 
 ## The harness
 
-For a 2006 Passat you need three wires. Buy the J1962 male connector as a **pre-made
+For a typical OBD-II car you need three wires. Buy the J1962 male connector as a **pre-made
 pigtail** (€5–8) — moulding your own is the one part of this not worth the effort.
 
 | OBD-II pin | Signal | Goes to |
@@ -138,15 +138,15 @@ carpi bench tp20 --responder can1 --tester can0
 
 **The `tp20` bench is the most valuable test in this project.** TP2.0 is
 connection-oriented, negotiates timing parameters and needs a keepalive, and both sides of
-car-pi's implementation were written from the same specification by the same author. The
-existing test suite proves the two agree; only real controllers at real bit timings prove
-the timing is right. If TP2.0 has a timing bug, this is where it surfaces — on a bench,
-not in a car park.
+car-pi's implementation were written from the same specification, with no independently
+built implementation to cross-check against. The existing test suite proves the two agree;
+only real controllers at real bit timings prove the timing is right. If TP2.0 has a timing
+bug, this is where it surfaces — on a bench, not in a car park.
 
 **3. Listen-only on the car — is the bus what you think it is?**
 
 Listen-only cannot transmit, so it cannot disturb a vehicle. Do this before anything else
-touches the Passat.
+touches the car.
 
 ```bash
 sudo ip link set can0 down
@@ -182,7 +182,7 @@ separate isolated 5 V supply. Not needed for a battery-powered bench tool.
 
 ## The alternative: a Pico as a USB-CAN adapter
 
-You already own a Pico, and it can be a complete CAN interface with **no controller
+A Raspberry Pi Pico can also be a complete CAN interface with **no controller
 chip** — [`can2040`](https://github.com/KevinOConnor/can2040) implements CAN 2.0B in
 software on the RP2040's PIO, so a Pico plus a transceiver is the whole bill of
 materials.
@@ -208,8 +208,8 @@ sudo ip link set can0 up type can bitrate 500000
 
 Trade-offs against the MCP2515 route: fewer parts and it works from a laptop over USB
 too, but you depend on somebody else's firmware and you have a USB connector in a car
-rather than a soldered header. `can2040` is CAN 2.0 only, which for this car does not
-matter.
+rather than a soldered header. `can2040` is CAN 2.0 only, which for a pre-2019 car does
+not matter.
 
 The Pico is also the natural home for the ignition-sense and clean-shutdown watchdog if
 you ever move off the battery bank.
@@ -228,4 +228,4 @@ you ever move off the battery bank.
 | **Second node for the bench** (Pico + transceiver) | 5 |
 | **Total** | **~€20** |
 
-Against €30–65 for a CAN FD HAT whose CAN FD you cannot use on this car.
+Against €30–65 for a CAN FD HAT whose CAN FD an older vehicle cannot use.

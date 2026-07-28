@@ -1,7 +1,7 @@
 """Volkswagen Transport Protocol 2.0.
 
-VAG cars from roughly 2001 to 2010 -- a 2006 Passat B6 among them -- carry manufacturer
-diagnostics over KWP2000 on CAN, but not over ISO-TP. They use TP2.0, VW's own transport,
+VAG cars from roughly 2001 to 2010 carry manufacturer diagnostics over KWP2000 on CAN,
+but not over ISO-TP. They use TP2.0, VW's own transport,
 and the two are not interchangeable. Generic OBD-II on the same car still uses ISO-TP,
 because EOBD mandates it, which is why a cheap scan tool works while telling you almost
 nothing: the odometer, the cluster and the comfort modules are all behind TP2.0.
@@ -24,7 +24,7 @@ https://jazdw.net/tp20, which is the reference open documentation for TP2.0.
 
 **Unverified against a real vehicle.** This was written from that specification, and the
 simulator implements the same specification independently -- so the tests prove the two
-agree, not that a Passat agrees with either. Timing and keepalive behaviour in particular
+agree, not that a real vehicle agrees with either. Timing and keepalive behaviour in particular
 are the sort of thing only a real car settles. Treat it as a careful hypothesis.
 """
 

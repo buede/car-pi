@@ -306,12 +306,12 @@ def bench_tp20(
     would notice.
     """
     from carpi.sim.tp20 import Tp20Responder
-    from carpi.sim.vag import passat_b6_modules
+    from carpi.sim.vag import kwp2000_era_modules
 
     result = BenchResult(kind="tp20", responder=responder, tester=tester)
 
     with _two_links(responder, tester, kind, bitrate) as (sim_bus, link):
-        vag = Tp20Responder(sim_bus, passat_b6_modules())
+        vag = Tp20Responder(sim_bus, kwp2000_era_modules())
         vag.start()
         try:
             started = time.monotonic()

@@ -30,7 +30,7 @@ from carpi.core.protocol.kwp2000 import KwpError
 from carpi.core.transport.canbus import CanLink
 from carpi.core.transport.tp20 import open_tp20_channel
 from carpi.sim.tp20 import Tp20Responder
-from carpi.sim.vag import passat_b6_modules
+from carpi.sim.vag import kwp2000_era_modules
 
 COMFORT = 0x46
 AIRBAG = 0x15
@@ -43,7 +43,7 @@ CHANGED = bytes.fromhex("0A1B2D")
 @pytest.fixture
 def car() -> Iterator[tuple[Tp20Responder, CanLink]]:
     bus = can.interface.Bus(interface="virtual", channel="carpi-coding-test")
-    responder = Tp20Responder(bus, passat_b6_modules())
+    responder = Tp20Responder(bus, kwp2000_era_modules())
     responder.start()
     try:
         with CanLink.open("virtual", "carpi-coding-test") as link:
