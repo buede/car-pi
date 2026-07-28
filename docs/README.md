@@ -47,6 +47,22 @@ This is the complete list. Every document is here.
   invariants a pull request must not break.
 - [README.md](../README.md) — what car-pi is, and the six-way router into these documents.
 
+## Deliberately not written
+
+Kept as a record, so these do not get added by reflex. Each was considered and rejected.
+
+| Not written | Why not |
+|---|---|
+| An FAQ | Where facts go to escape ownership. A question with no home means a document is missing, not that an FAQ is |
+| A protocols explainer | A textbook, not a task. The standards citations already live in the code |
+| An architecture tour | Nobody arrives at a pre-alpha tool asking for one. The source tree is in CONTRIBUTING.md |
+| A phone-interface page | The interface has no options. Its facts belong to the three documents that already cover them |
+| A separate security page | It would split "there is no password" from "coding must not ship without one", which are the same argument |
+| A roadmap or status page | Honesty is better served by "this has never run on a real vehicle" sitting next to the feature |
+
+If you want to add a document, check it against this table first. If it belongs anyway, add it
+here and to the list above.
+
 ## Next
 
 - New here? → [try it without a car](try-it-without-a-car.md)

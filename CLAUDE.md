@@ -120,6 +120,34 @@ nor rules may reach `eval`. Every addition here widens what an untrusted file ca
 **refuses rather than queues**, because two callers sharing a channel would each decode the
 other's replies — silent corruption, not an error.
 
+## YAGNI — keep features and files to a minimum
+
+Build what is needed now, not what might be needed later. This is not aspirational here; the
+codebase already does it, so follow the precedent rather than interpret the principle.
+
+- **Do not add a file when an existing one fits.** `docs/` keeps a written list of documents
+  deliberately *not* created, each with its reason — no FAQ ("where facts go to escape
+  ownership"), no protocols explainer ("a textbook, not a task"), no architecture tour. If you
+  think a new file is needed, justify it against that list and add it to `docs/README.md`.
+- **Do not add a flag for a hypothetical need.** The coding path's refusal of safety-critical
+  modules has no override, on the stated grounds that "a flag is exactly what gets passed at
+  eleven at night". A test asserts the parameter does not exist.
+- **Do not widen a surface speculatively.** `core/expr.py`'s allowlist is four functions, and
+  the comment says "Deliberately tiny. Every addition here widens what a definition file can
+  do." The same goes for CLI options, API routes and schema fields.
+- **Do not write roadmap prose.** "Future DoIP path" and a speculative Pico watchdog aside were
+  both cut from the docs for this reason. Unbuilt intentions belong in issues, not in files
+  that read as documentation of what exists.
+- **Do not pad the database.** `defs/vehicles/` ships nearly empty on purpose. An unverified
+  entry is worse than a missing one.
+- **Prefer deleting to deprecating**, and absent code to disabled code. There is no CHANGELOG
+  at version 0.0.1 because there are no releases yet.
+- **A new dependency needs a stated reason.** `pyproject.toml` picks `websockets` over
+  `uvicorn[standard]` specifically to avoid compiling uvloop and httptools on a Pi.
+
+When a change feels like it needs a new module, a new flag and a new doc, it is usually one
+feature pretending to be three. Ask before building it.
+
 ## Non-obvious couplings
 
 These break without touching the file you edited.
