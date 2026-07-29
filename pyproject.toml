@@ -9,6 +9,11 @@ description = "Open-source vehicle diagnostics and coding hub for Raspberry Pi"
 readme = "README.md"
 # 3.11 is what Raspberry Pi OS Bookworm ships. Do not raise this without a
 # matching plan for the target image, even if your dev machine has something newer.
+#
+# Deliberately open-ended, and deliberately wider than what CI validates. 3.11 is the
+# only version tested, and the classifiers below say so; newer ones are permitted because
+# refusing to install on a contributor's 3.13 laptop would cost more than the untested
+# versions do. A break on a newer version is a bug report, not something to pre-empt.
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -18,6 +23,8 @@ classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",
   "Topic :: Scientific/Engineering",
+  # Only 3.11 is listed because only 3.11 is tested. Listing versions CI does not run
+  # would be claiming coverage that does not exist.
   "Programming Language :: Python :: 3.11",
 ]
 

@@ -11,25 +11,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # One environment: Linux on Python 3.11, which is what Raspberry Pi OS Bookworm ships
+  # and therefore the only combination a unit in a car park will ever run.
+  #
+  # There used to be a version matrix here. It was removed deliberately. No matrix covers
+  # the variations that exist, so testing several buys a false sense of having covered
+  # them while every job repeats the same work -- lint, the definition check and the
+  # JavaScript parse are neither platform- nor version-dependent, and ran three times.
+  # The honest position is to validate the one environment that ships and fix whatever
+  # else surfaces when it surfaces.
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 3.11 is what Raspberry Pi OS Bookworm ships, so it is the version that
-          # actually matters. The others catch anything that will break on upgrade.
-          - { os: ubuntu-latest, python: "3.11" }
-          - { os: ubuntu-latest, python: "3.13" }
-          - { os: macos-latest, python: "3.11" }
+    name: Ubuntu / Python 3.11
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.11"
           cache: pip
 
       - name: Install
@@ -45,7 +45,6 @@ jobs:
       # The deployment scripts are shell, run as root on a Pi, and are the least
       # exercised code here -- exactly where a quoting mistake hides.
       - name: Shellcheck
-        if: runner.os == 'Linux'
         run: shellcheck deploy/*.sh dev
 
       # There is no browser in CI, so the UI's JavaScript is at least parsed. Combined
@@ -118,9 +117,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # The virtual-bus tests cover the protocol logic, but a real vehicle is reached
-      # over SocketCAN with kernel ISO-TP. vcan exercises that path for real, so a
-      # regression in it is caught here rather than in a car park.
+      # The virtual-bus tests run entirely in process. vcan puts a real kernel CAN stack
+      # and real sockets underneath the same code, which is how a regression in the
+      # SocketCAN backend gets caught here rather than in a car park.
+      #
+      # It does not exercise kernel ISO-TP: segmentation is done in userspace by the
+      # `isotp` library on every platform -- see `NotifierBasedCanStack` in
+      # core/transport/canbus.py. Nothing here tests the kernel's own ISO-TP module.
       - name: Set up a virtual CAN interface
         run: |
           set -euo pipefail
@@ -162,9 +165,9 @@ jobs:
             exit 1
           fi
 
-      # The bench exists to catch timing problems that a virtual bus cannot show. vcan
-      # still has no bit timing, but it does put a real kernel CAN stack underneath --
-      # more than the in-process bus, less than two controllers on a wire.
+      # The bench exists to catch timing problems that an in-process bus cannot show. vcan
+      # has no bit timing either, so this is more than the virtual bus and considerably
+      # less than two controllers on a wire. TP2.0 remains unproven against a real car.
       - name: Run the hardware bench over vcan
         env:
           CARPI_TEST_SOCKETCAN: vcan0
