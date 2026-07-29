@@ -272,6 +272,62 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 .unassessed { border-color: var(--medium); }
 .unassessed b { color: var(--medium); }
 
+/* The same rule one level down, in the history list. A summary line that mentioned only
+   findings would describe a car nothing could be asked about exactly as it describes a
+   clean one. */
+.skipped-note { color: var(--medium); }
+
+/* The read-only badge. Deliberately quiet rather than alarming: it is a reassurance, and
+   the thing it reassures about is permanent. */
+.chip.readonly {
+  border-color: var(--low);
+  color: var(--low);
+}
+
+/* The first-run notice. Bordered rather than tinted, because it has to be readable in
+   direct sunlight in a driveway. */
+.notice { border-left: 4px solid var(--medium); }
+.notice p { margin: 0 0 0.6rem; }
+
+/* Advice for a bus that is not usable, and any other qualified statement. */
+.hint.caution { color: var(--medium); }
+
+.rule {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+/* The disclosure for everything the summary does not show. Collapsed by default, so the
+   simple path stays simple and the full data is still on the device rather than only in a
+   downloaded file. */
+details { margin-top: 0.6rem; }
+
+details > summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  font-weight: 500;
+  font-size: 0.9rem;
+  /* Comfortably tappable, for the same cold-hands reason as the buttons. */
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+}
+
+details h4 {
+  margin: 0.8rem 0 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Raw bytes and decoded values line up only in a monospaced face. */
+details td { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
+
 .codes { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
 .codes .permanent { color: var(--critical); font-weight: 600; }
 

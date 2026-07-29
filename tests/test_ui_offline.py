@@ -75,6 +75,22 @@ class TestNoExternalRequests:
             target = match.group(1)
             assert not target.startswith(("http:", "https:", "//")), target
 
+    def test_no_served_route_depends_on_a_cdn(self, database) -> None:
+        """The static assets are not the only thing that can reach for a CDN.
+
+        FastAPI's interactive documentation loads Swagger's bundle from jsdelivr, so
+        ``/api/docs`` renders a blank page on the unit's own hotspot. The rest of this
+        file only scans ``static/``, which is how that route escaped the invariant.
+        """
+        from carpi.server import SimulatedProvider, VehicleGateway, create_app
+
+        gateway = VehicleGateway(SimulatedProvider("recently-cleared"), database)
+        paths = {route.path for route in create_app(gateway, serve_ui=True).routes}
+        assert "/api/docs" not in paths
+        assert "/api/redoc" not in paths
+        # The schema itself is fine: it is JSON served by the unit and fetches nothing.
+        assert "/api/openapi.json" in paths
+
 
 class TestServiceWorker:
     def test_precaches_the_whole_shell(self) -> None:
@@ -126,6 +142,110 @@ class TestAccessibilityBasics:
     def test_reduced_motion_is_respected(self) -> None:
         css = (static_dir() / "style.css").read_text(encoding="utf-8")
         assert "prefers-reduced-motion" in css
+
+    def test_tabs_are_wired_to_their_panels(self) -> None:
+        """A tablist without aria-controls announces three buttons and no panels."""
+        html = (static_dir() / "index.html").read_text(encoding="utf-8")
+        assert html.count('role="tabpanel"') == html.count('role="tab"')
+        for view in ("scan", "live", "history"):
+            assert f'aria-controls="view-{view}"' in html
+            assert f'aria-labelledby="tab-{view}"' in html
+
+    def test_the_mileage_field_states_its_unit(self) -> None:
+        """A figure typed in miles does not fail; it cross-checks against a wrong number.
+
+        The odometer comparison is the headline finding, so the unit belongs in the label
+        rather than only in prose the reader may skip.
+        """
+        html = (static_dir() / "index.html").read_text(encoding="utf-8")
+        label = re.search(r'<label for="odometer">(.*?)</label>', html, re.DOTALL)
+        assert label is not None
+        assert "km" in label.group(1).lower()
+
+
+class TestSilenceIsNeverAPass:
+    """The report engine's central rule, checked at the presentation layer.
+
+    ``not_assessed_count`` is computed and shipped in every scan summary. The history
+    list once rendered only the worst severity, so a scan where nothing could be asked
+    read as "no findings" -- indistinguishable from a clean car.
+    """
+
+    def test_history_entries_carry_the_skipped_count(self) -> None:
+        app = _without_comments((static_dir() / "app.js").read_text(encoding="utf-8"))
+        assert "not_assessed_count" in app
+        assert "not assessed" in app
+
+    def test_a_clean_verdict_is_qualified_when_checks_were_skipped(self) -> None:
+        app = _without_comments((static_dir() / "app.js").read_text(encoding="utf-8"))
+        assert "before treating this as a clean car" in app
+
+    def test_rules_that_threw_are_shown(self) -> None:
+        """A rule that raised is in none of the three counts, so it needs its own section."""
+        app = _without_comments((static_dir() / "app.js").read_text(encoding="utf-8"))
+        assert "rule_errors" in app
+
+
+class TestTrustSurface:
+    """What the interface says about itself, where somebody can actually read it.
+
+    Every statement here already existed in ``docs/limits-and-safety.md``. That is the
+    problem it fixes: a person handed this unit and told to join its hotspot never opens
+    that file, so a disclaimer living only there informs nobody.
+    """
+
+    def test_the_read_only_guarantee_is_visible_in_the_interface(self) -> None:
+        html = (static_dir() / "index.html").read_text(encoding="utf-8")
+        assert "read-only" in html
+
+    def test_the_first_run_notice_covers_all_four_facts(self) -> None:
+        html = (static_dir() / "index.html").read_text(encoding="utf-8").lower()
+        assert "cannot change anything" in html  # it cannot write
+        assert "ask the owner" in html  # permission
+        assert "pre-alpha" in html  # maturity
+        assert "not evidence of a sound car" in html  # an empty database is not a pass
+
+    def test_the_notice_can_be_dismissed_without_working_storage(self) -> None:
+        """Private browsing rejects localStorage writes; the page must still boot."""
+        app = (static_dir() / "app.js").read_text(encoding="utf-8")
+        notice = app[app.index("function showFirstRunNotice") :][:900]
+        assert "try {" in notice and "catch" in notice
+
+
+class TestAdvancedMode:
+    """The report carries about five times what the summary shows.
+
+    Before this, the only way to see a module's raw bytes or its Mode 06 numbers was to
+    download the JSON and open it elsewhere -- on a phone, on a hotspot with no internet.
+    """
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "odometer_by_module",
+            "module_readings",
+            "monitor_tests",
+            "freeze_frame",
+            "calibration_ids",
+            "supported_pids",
+            "uds_vin",
+        ],
+    )
+    def test_the_disclosure_reaches_a_field_the_summary_hides(self, field: str) -> None:
+        app = _without_comments((static_dir() / "app.js").read_text(encoding="utf-8"))
+        assert field in app, f"{field} is in the report and still not shown anywhere"
+
+    def test_it_is_collapsed_rather_than_a_fourth_tab(self) -> None:
+        """The simple path has to stay simple; the depth is opt-in."""
+        app = _without_comments((static_dir() / "app.js").read_text(encoding="utf-8"))
+        assert "'details'" in app
+        html = (static_dir() / "index.html").read_text(encoding="utf-8")
+        assert html.count('role="tab"') == 3
+
+    def test_mode_06_values_are_not_given_units_they_may_not_have(self) -> None:
+        """The scaling table is not shipped, so the counts stay raw and say so."""
+        app = (static_dir() / "app.js").read_text(encoding="utf-8")
+        assert "Raw counts" in app
 
 
 def _without_comments(source: str) -> str:

@@ -10,6 +10,7 @@ because they change. Run `carpi <command> --help` for those — that is always c
 Add `-h` to anything. Add `-v` for more detail, repeated for more still.
 
 **On this page**
+- Start here if you are not sure
 - Try it with no car
 - Inspect a real car
 - Reach more modules (UDS)
@@ -17,6 +18,23 @@ Add `-h` to anything. Add `-v` for more detail, repeated for more still.
 - Change a setting
 - Test your hardware
 - The definition database
+
+## Start here if you are not sure
+
+One command asks questions instead of taking flags.
+
+| Command | What it does |
+|---|---|
+| `carpi guide` | Walks through an inspection, checking each step |
+
+```bash
+carpi guide
+```
+
+You should see a short menu, then one question at a time.
+
+It runs the commands below on your behalf, and prints each one as it goes. Nothing in it
+writes to a vehicle.
 
 ## Try it with no car
 
@@ -44,13 +62,25 @@ You should see a report with a permanent fault code and a recent-code-clear find
 | `carpi scan` | Scans the car and reports on it |
 | `carpi serve` | Serves the report to a phone over the network |
 
-Scan a car on `can0`, telling it the advertised mileage so it can be cross-checked:
+Scan a car on `can0`, telling it the advertised mileage in kilometres so it can be
+cross-checked:
 
 ```bash
 carpi scan --transport socketcan --channel can0 --odometer 145000
 ```
 
 You should see a report ordered worst finding first. Add `--format json -o car.json` to keep it.
+
+Generic OBD-II reaches eight modules, and the instrument cluster is not one of them. Add
+`--discover` to sweep for the rest and read each one's standardised identification:
+
+```bash
+carpi scan --channel can0 --discover
+```
+
+You should see the modules a generic tool never speaks to, with their part numbers and the
+VIN each one holds. A module holding a different VIN came out of a different car. This
+needs no definition file, and it adds most of a minute.
 
 > **Careful:** check the bus is healthy before you transmit. See
 > [inspect a car](inspect-a-car.md).
@@ -135,12 +165,42 @@ A pass means the controller and its wiring work. It says nothing about the trans
 |---|---|
 | `carpi defs check` | Validates every definition file against its schema |
 | `carpi defs facts` | Lists every fact the rules reference, for writing new rules |
+| `carpi defs compare` | Finds which identifiers changed between two sweeps of a module |
+| `carpi defs draft` | Turns sweeps into a starting-point definition file |
+| `carpi defs contribute` | Reduces scans to something shareable, and offers it to the project |
 
 ```bash
 carpi defs check
 ```
 
 You should see no errors. This runs in CI on every push.
+
+Find which identifier holds the odometer, by sweeping before and after driving 1.2 km:
+
+```bash
+carpi defs compare before.json after.json --expect-delta 1.2
+```
+
+You should see a ranked list, best candidate first, naming the units each identifier would
+have to be counting in.
+
+Turn a sweep into a file you can start editing:
+
+```bash
+carpi defs draft cluster.json --id vw-mqb --make Volkswagen --platform MQB -o mqb.yaml
+```
+
+You should see every identifier the sweep found, each marked `TODO` until you have proven
+what it holds. See [contribute vehicle data](contribute-vehicle-data.md).
+
+Offer what you learned back to the project:
+
+```bash
+carpi defs contribute car.json
+```
+
+You should see a link that opens a prefilled issue. Nothing is uploaded, and the file it
+writes contains no values, no serial numbers and no VIN.
 
 ## Next
 

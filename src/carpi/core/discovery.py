@@ -50,7 +50,9 @@ __all__ = [
     "DEFAULT_SWEEP_HIGH",
     "DEFAULT_SWEEP_LOW",
     "TESTER_PRESENT_PROBE",
+    "BusHealth",
     "DiscoveredModule",
+    "check_bus",
     "observe_traffic",
     "sweep_addresses",
 ]
@@ -126,6 +128,28 @@ class SweepStats:
     modules: list[DiscoveredModule] = field(default_factory=list)
 
 
+def _watch(link: CanLink, duration: float) -> tuple[dict[int, int], int]:
+    """Listen for *duration* seconds. Returns frame counts by ID, and an error count.
+
+    Error frames are counted separately because they are not traffic -- they are the
+    controller reporting that it cannot make sense of the bus, which is a different
+    diagnosis from silence and points at different causes.
+    """
+    counts: dict[int, int] = {}
+    errors = 0
+    deadline = time.monotonic() + max(0.0, duration)
+    with link.raw_reader() as reader:
+        while time.monotonic() < deadline:
+            message = reader.get_message(timeout=0.2)
+            if message is None:
+                continue
+            if getattr(message, "is_error_frame", False):
+                errors += 1
+                continue
+            counts[message.arbitration_id] = counts.get(message.arbitration_id, 0) + 1
+    return dict(sorted(counts.items())), errors
+
+
 def observe_traffic(
     link: CanLink,
     duration: float = 5.0,
@@ -140,17 +164,97 @@ def observe_traffic(
     means the interface is not actually connected to a live bus, and no amount of
     probing afterwards will work.
     """
-    counts: dict[int, int] = {}
-    deadline = time.monotonic() + max(0.0, duration)
-    with link.raw_reader() as reader:
-        while time.monotonic() < deadline:
-            message = reader.get_message(timeout=0.2)
-            if message is None:
-                continue
-            counts[message.arbitration_id] = counts.get(message.arbitration_id, 0) + 1
+    counts, _ = _watch(link, duration)
     if on_progress is not None:
         on_progress(f"observed {sum(counts.values())} frames from {len(counts)} sources")
-    return dict(sorted(counts.items()))
+    return counts
+
+
+@dataclass(frozen=True)
+class BusHealth:
+    """What a passive listen concluded about the bus, and what to do about it.
+
+    The two mistakes that account for most failed inspections -- a fitted termination
+    jumper, and an ignition left in accessory -- are both diagnosable from listening
+    alone, before anything is transmitted. Keeping the diagnosis here rather than in a
+    caller means the command line and the web interface give the same answer, and that
+    the reasoning sits next to the measurement it is drawn from.
+    """
+
+    duration: float
+    frames: int = 0
+    error_frames: int = 0
+    sources: tuple[int, ...] = ()
+
+    @property
+    def verdict(self) -> str:
+        """One of ``errors``, ``silent`` or ``healthy``.
+
+        Errors outrank silence: a bus flooding with error frames may also be delivering
+        no usable traffic, and the terminator is the thing to fix first.
+        """
+        if self.error_frames:
+            return "errors"
+        return "healthy" if self.frames else "silent"
+
+    @property
+    def healthy(self) -> bool:
+        return self.verdict == "healthy"
+
+    @property
+    def summary(self) -> str:
+        if self.verdict == "errors":
+            return f"{self.error_frames} error frames in {self.duration:g}s"
+        if self.verdict == "silent":
+            return f"nothing heard in {self.duration:g}s"
+        return f"{self.frames} frames from {len(self.sources)} sources"
+
+    @property
+    def advice(self) -> tuple[str, ...]:
+        """Causes worth checking, most likely first.
+
+        These mirror docs/troubleshooting.md. They are ordered by how often each one is
+        actually the cause, not by how easy it is to check.
+        """
+        if self.verdict == "errors":
+            return (
+                "A termination resistor is fitted. Move the 120 ohm jumper to off, or "
+                "remove it. The car's bus is already terminated at both ends, and a "
+                "third terminator breaks it.",
+                "Failing that, the bitrate is wrong for this bus.",
+            )
+        if self.verdict == "silent":
+            return (
+                "The bitrate is wrong. Most cars use 500000; try 250000.",
+                "The ignition is not fully on. Accessory mode is not enough, and many "
+                "modules stay asleep in it.",
+                "CAN_H and CAN_L are swapped. Pin 6 is CAN_H, pin 14 is CAN_L.",
+            )
+        return ()
+
+
+def check_bus(
+    link: CanLink,
+    duration: float = 3.0,
+    *,
+    on_progress: Callable[[str], None] | None = None,
+) -> BusHealth:
+    """Decide whether the bus is usable, transmitting nothing at all.
+
+    This is the step to run before anything else on a vehicle. It cannot disturb the car
+    -- it only listens -- and it distinguishes the three states that matter: healthy,
+    silent, and reporting errors. Scanning a silent bus otherwise produces a report that
+    says a car answered no questions, which reads far too much like a clean car.
+    """
+    if on_progress is not None:
+        on_progress(f"listening for {duration:g}s, sending nothing")
+    counts, errors = _watch(link, duration)
+    return BusHealth(
+        duration=duration,
+        frames=sum(counts.values()),
+        error_frames=errors,
+        sources=tuple(counts),
+    )
 
 
 def sweep_addresses(

@@ -53,8 +53,13 @@ car-pi also speaks UDS, read-only, to reach the rest.
 nearly always done by rewriting the instrument cluster. Every other module keeps the true
 figure. Modules do not drift apart on their own, so a disagreement is close to proof.
 
+> **Careful:** this one needs a definition file for your car, and the shipped database is
+> nearly empty. No standard identifier holds the odometer. See
+> [contribute vehicle data](contribute-vehicle-data.md).
+
 **VIN, compared across modules.** A module holding a different car's VIN came out of a
-different car.
+different car. This needs no definition file, because the VIN identifier is standardised.
+Add `--discover` to a scan and every module that answers is asked for it.
 
 **Manufacturer fault codes.** Every module's own faults, which generic OBD-II never shows.
 
@@ -75,6 +80,19 @@ carpi uds discover
 ```
 
 You should see a list of modules that answered, including ones outside the OBD-II range.
+
+Some modules ignore the default probe but answer a data request. To catch those:
+
+```bash
+carpi uds discover --probe read-vin
+```
+
+You should see any module the first sweep missed. Both probes are reads.
+
+**Fault codes are explained without an internet connection.** Every code is shown with what
+the standard says about it: which part of the car it concerns, and whether it is a code every
+manufacturer uses identically or one only your make defines. A car park has no signal, so
+looking it up later is not a plan.
 
 ## What this does not tell you
 

@@ -13,7 +13,7 @@ multi-module car as tampered with.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -30,13 +30,14 @@ from carpi.core.protocol.uds import UdsClient, UdsError
 from carpi.core.rules import Evaluation, evaluate, flatten_facts
 from carpi.core.transport.base import EcuAddress, NoResponse, TransportError
 from carpi.core.transport.canbus import CanLink
-from carpi.core.vehicles import ModuleReading, VehicleProfile, read_module
+from carpi.core.vehicles import EcuProfile, ModuleReading, VehicleProfile, read_module
 
 __all__ = [
     "EcuScan",
     "ProgressCallback",
     "ScanResult",
     "build_facts",
+    "discover_modules",
     "scan_ecu",
     "scan_vehicle",
 ]
@@ -252,6 +253,8 @@ def scan_vehicle(
     on_progress: ProgressCallback | None = None,
     profile: VehicleProfile | None = None,
     read_module_vins: bool = True,
+    discover: bool = False,
+    discovery_window: float = 0.08,
 ) -> ScanResult:
     """Discover every responding ECU and scan each in turn.
 
@@ -261,6 +264,16 @@ def scan_vehicle(
 
     *read_module_vins* asks each module for the standardised VIN identifier. One request
     per module, and it is what makes the cross-module VIN comparison possible.
+
+    *discover* additionally sweeps the diagnostic address range and reads the standardised
+    identification block from anything it finds. Off by default, because it transmits a
+    few hundred more frames and adds most of a minute. With it, a scan reports which
+    modules a car has and compares their VINs even when no definition file for that
+    vehicle exists -- which is every real car today.
+
+    *discovery_window* is how long each probed address gets to answer. Most of a sweep's
+    duration is that multiplied by 256, so it is the knob trading sweep time against the
+    risk of missing a slow module.
     """
     started = datetime.now(UTC).isoformat(timespec="seconds")
     notes: list[str] = []
@@ -289,12 +302,35 @@ def scan_vehicle(
             scan.uds_vin = _read_module_vin(link, address, timeout=timeout)
         scans.append(scan)
 
+    # Selecting a profile by VIN needs the VIN, which is only known now. `--profile` has
+    # promised this in its help text since it was written, and until now it did not happen.
+    partial = ScanResult(started_at=started, finished_at=started, transport="", ecus=tuple(scans))
+    if profile is None and partial.vin:
+        profile = database.profile_for_vin(partial.vin)
+        if profile is not None:
+            report(f"VIN matches the {profile.label} profile")
+
     readings: list[ModuleReading] = []
     if profile is not None:
         report(f"reading manufacturer data ({profile.label})")
         for ecu_profile in profile.ecus:
             uds = UdsClient(link.channel(ecu_profile.address), timeout=timeout)
             readings.append(read_module(uds, ecu_profile, on_progress=on_progress))
+
+    if discover:
+        # After the profile, so a module a profile already describes properly is not also
+        # listed with only its standardised identification.
+        described = {reading.ecu.response_id for reading in readings}
+        described.update(address.rx_id for address in addresses)
+        readings.extend(
+            discover_modules(
+                link,
+                known=described,
+                timeout=timeout,
+                response_window=discovery_window,
+                on_progress=on_progress,
+            )
+        )
 
     report("evaluating findings")
     return ScanResult(
@@ -308,6 +344,104 @@ def scan_vehicle(
         profile_label=profile.label if profile else None,
         module_readings=tuple(readings),
     )
+
+
+def _standard_reads(identification: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Split an identification block into decoded values and raw bytes."""
+    values: dict[str, Any] = {}
+    raw: dict[str, str] = {}
+    for name, entry in identification.items():
+        # Text when the bytes are printable, raw hex otherwise. Never a guess: an
+        # identification field whose encoding is manufacturer-specific stays as bytes
+        # rather than being rendered as mojibake that looks like a part number.
+        values[name] = entry.get("text") or entry.get("raw")
+        raw[name] = entry.get("raw", "")
+    return values, raw
+
+
+def discover_modules(
+    link: CanLink,
+    *,
+    known: Iterable[int] = (),
+    timeout: float = 1.0,
+    request_delay: float = 0.02,
+    response_window: float = 0.08,
+    on_progress: ProgressCallback | None = None,
+) -> list[ModuleReading]:
+    """Sweep for modules outside the OBD-II range and read what each one says it is.
+
+    This is what makes a scan capable on a car nobody has written a definition for. The
+    sweep finds the addresses, and every identifier read afterwards is from ISO 14229
+    Annex C -- standardised, so it needs no per-vehicle data at all. What comes back is
+    each module's part number, serial number, software versions, programming date, and
+    its VIN.
+
+    That last one is the point. A module holding a different VIN from the rest of the car
+    came out of a different car, and the comparison needs no definition file to work. The
+    odometer still does, because no standard identifier holds it.
+
+    Read-only throughout: the sweep probes with TesterPresent and the reads are all
+    ReadDataByIdentifier.
+    """
+    from carpi.core.discovery import sweep_addresses
+
+    def report(message: str) -> None:
+        if on_progress is not None:
+            on_progress(message)
+
+    report("sweeping for modules outside the OBD-II range")
+    stats = sweep_addresses(
+        link,
+        request_delay=request_delay,
+        response_window=response_window,
+        on_progress=on_progress,
+    )
+
+    already = set(known)
+    # OBD-II modules are excluded because `scan_ecu` has already interrogated them far more
+    # thoroughly than an identification block would. Re-reading them here would cost a
+    # request each to learn less.
+    candidates = [
+        module
+        for module in stats.modules
+        if not module.is_obd_address and module.response_id not in already
+    ]
+    report(f"{len(stats.modules)} address(es) answered, {len(candidates)} outside OBD-II")
+
+    readings: list[ModuleReading] = []
+    for index, module in enumerate(candidates, start=1):
+        report(f"identifying module {index} of {len(candidates)} ({module.label})")
+        try:
+            client = UdsClient(link.channel(module.address), timeout=timeout)
+            # Many modules answer the identification block only inside an extended
+            # session. A refusal is not fatal -- the reads are attempted either way, and
+            # whatever answers is kept.
+            client.start_session()
+            identification = client.identification()
+        except (NoResponse, TransportError, UdsError) as exc:
+            log.debug("module %s could not be identified: %s", module.label, exc)
+            continue
+
+        if not identification:
+            continue
+
+        values, raw = _standard_reads(identification)
+        # The address stays in the name. `EcuAddress.label` prefers a name when it has one,
+        # so a module that names itself would otherwise push its own address out of the
+        # report -- and the address is what somebody needs to go back and read more.
+        reported = values.get("system_name_or_engine_type")
+        name = f"{reported} ({module.label})" if reported else f"Module {module.label}"
+        profile = EcuProfile(
+            name=str(name),
+            request_id=module.request_id,
+            response_id=module.response_id,
+            extended=module.extended,
+            reads=(),
+        )
+        readings.append(ModuleReading(ecu=profile, values=values, raw=raw, reached=True))
+
+    report(f"identified {len(readings)} module(s) beyond generic OBD-II")
+    return readings
 
 
 def _read_module_vin(link: CanLink, address: EcuAddress, *, timeout: float) -> str | None:
@@ -414,6 +548,15 @@ def _uds_facts(result: ScanResult) -> dict[str, Any]:
     # Cross-module VIN comparison. Standardised (identifier 0xF190), so this works
     # without any manufacturer definition at all.
     module_vins = {ecu.address.label: ecu.uds_vin for ecu in result.ecus if ecu.uds_vin}
+
+    # Modules found by an address sweep hold their VIN at the same standardised identifier,
+    # and they are the ones worth comparing: an instrument cluster fitted from another car
+    # is the usual way a mileage discrepancy arises, and no OBD-II address reaches it.
+    for reading in result.module_readings:
+        vin = reading.values.get("vin")
+        if isinstance(vin, str) and vin.strip():
+            module_vins[reading.ecu.name] = vin.strip()
+
     if module_vins:
         facts["uds.module_vin_count"] = len(module_vins)
         reference = result.vin or next(iter(module_vins.values()))

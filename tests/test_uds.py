@@ -13,7 +13,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from carpi.core.discovery import observe_traffic, sweep_addresses
+from carpi.core.didscan import scan_dids
+from carpi.core.discovery import BusHealth, check_bus, observe_traffic, sweep_addresses
 from carpi.core.protocol.uds import (
     FORBIDDEN_SERVICES,
     STANDARD_DIDS,
@@ -23,6 +24,7 @@ from carpi.core.protocol.uds import (
     UdsError,
     UdsNegativeResponse,
 )
+from carpi.core.scan import build_facts, discover_modules, scan_vehicle
 from carpi.core.transport.base import EcuAddress
 from carpi.core.transport.canbus import CanLink
 from carpi.sim import SimulatedVehicle, get_scenario
@@ -257,3 +259,133 @@ class TestAddressDiscovery:
         before = sum(len(ecu.received) for ecu in vehicle.ecus)
         observe_traffic(link, 0.2)
         assert sum(len(ecu.received) for ecu in vehicle.ecus) == before
+
+
+@pytest.fixture(scope="module")
+def discovered(cluster_car) -> list:
+    """One sweep, shared. A 256-address sweep is most of a minute of response windows."""
+    _, link = cluster_car
+    return discover_modules(link, timeout=0.3, request_delay=0.0, response_window=0.02)
+
+
+class TestDiscoveringModulesWithNoDefinitions:
+    """The capability that makes a scan useful on a car nobody has described yet.
+
+    Generic OBD-II reaches eight modules and the odometer is in none of them. Before this,
+    reaching the cluster needed a hand-written vehicle profile, and the shipped database
+    contains exactly one -- marked fictional. So on every real car the cross-module checks
+    were permanently unassessable.
+    """
+
+    def test_it_finds_and_identifies_the_cluster(self, discovered) -> None:
+        assert len(discovered) == 1
+        assert discovered[0].reached is True
+
+    def test_the_identification_needs_no_vehicle_definition(self, discovered) -> None:
+        """Every identifier read here is ISO 14229 Annex C, so it ships as fact."""
+        values = discovered[0].values
+        assert values["vin"] == "CARPI0SIMULATED01"
+        assert values["ecu_serial_number"] == "CLU-0000001"
+
+    def test_the_address_survives_into_the_report(self, discovered) -> None:
+        """It is what somebody needs to go back and read more from that module."""
+        assert "714/77E" in discovered[0].ecu.address.label
+
+    def test_modules_already_covered_are_not_listed_twice(self, cluster_car) -> None:
+        _, link = cluster_car
+        readings = discover_modules(
+            link, known={0x77E}, timeout=0.3, request_delay=0.0, response_window=0.02
+        )
+        assert readings == []
+
+    def test_a_scan_with_discover_can_compare_vins_across_modules(
+        self, database, cluster_car
+    ) -> None:
+        """The whole point: a fact that was previously unreachable without a profile."""
+        _, link = cluster_car
+        result = scan_vehicle(
+            link,
+            database,
+            timeout=0.3,
+            discovery_timeout=0.3,
+            discover=True,
+            discovery_window=0.02,
+        )
+        facts = build_facts(result)
+        assert facts["uds.module_vin_count"] >= 2
+        assert facts["uds.vin_mismatch_count"] == 0
+
+    def test_without_discover_the_scan_is_unchanged(self, database, cluster_car) -> None:
+        """Opt-in, so nobody's scan silently starts transmitting hundreds more frames."""
+        _, link = cluster_car
+        result = scan_vehicle(link, database, timeout=0.3, discovery_timeout=0.3)
+        assert result.module_readings == ()
+
+
+class TestSweepAbortsOnASilentBus:
+    """The guard that was written for this case and could never fire on it.
+
+    A timeout arrives as an ordinary "unsupported" observation, and the counter only
+    watched for transport errors -- so a bus that had gone away ground through the whole
+    range. On the default ranges that is 26 minutes proving nothing, on battery power, in
+    a car park.
+    """
+
+    def test_it_stops_rather_than_grinding_through_the_range(self, cluster_car) -> None:
+        _, link = cluster_car
+        # An address nobody answers, so every probe times out and nothing comes back.
+        silent = UdsClient(link.channel(EcuAddress(tx_id=0x730, rx_id=0x7A0)), timeout=0.005)
+        report = scan_dids(silent, [(0x0100, 0x0400)], delay=0.0)
+
+        assert report.aborted is not None
+        assert "no reply at all" in report.aborted
+        assert len(report.observations) < 0x0400 - 0x0100
+
+    def test_a_negative_reply_is_not_silence(self, cluster) -> None:
+        """ "No such identifier" proves the module is there; a timeout proves nothing."""
+        cluster.start_session()
+        report = scan_dids(cluster, [(0xF190, 0xF191)], delay=0.0)
+        assert report.aborted is None
+        assert all(observation.answered for observation in report.observations)
+
+
+class TestPreflight:
+    """The check to run before anything else, and the reason a scan is worth trusting.
+
+    A scan of a silent bus succeeds and reports that the car answered nothing, which reads
+    far too much like a clean car. Deciding "this bus is not usable" before transmitting is
+    what stops that report from being produced at all.
+    """
+
+    def test_it_sends_nothing(self, cluster_car) -> None:
+        vehicle, link = cluster_car
+        before = sum(len(ecu.received) for ecu in vehicle.ecus)
+        check_bus(link, 0.2)
+        assert sum(len(ecu.received) for ecu in vehicle.ecus) == before
+
+    def test_a_quiet_bus_is_silent_not_healthy(self, cluster_car) -> None:
+        """The simulator answers requests but broadcasts nothing, so it is silent."""
+        _, link = cluster_car
+        health = check_bus(link, 0.2)
+        assert health.verdict == "silent"
+        assert health.healthy is False
+        assert health.advice  # never a dead end: silence always has causes to check
+
+    def test_silence_names_the_bitrate_first(self, cluster_car) -> None:
+        """Ordered by how often each is the cause, not by how easy it is to check."""
+        _, link = cluster_car
+        advice = check_bus(link, 0.2).advice
+        assert "bitrate" in advice[0]
+        assert any("accessory" in line.lower() for line in advice)
+
+    def test_error_frames_outrank_silence(self) -> None:
+        """A flooding bus may also carry no usable traffic; the terminator comes first."""
+        health = BusHealth(duration=3.0, frames=0, error_frames=40)
+        assert health.verdict == "errors"
+        assert "120 ohm" in health.advice[0]
+
+    def test_traffic_with_no_errors_is_healthy(self) -> None:
+        health = BusHealth(duration=3.0, frames=900, sources=(0x280, 0x288))
+        assert health.verdict == "healthy"
+        assert health.healthy is True
+        assert health.advice == ()

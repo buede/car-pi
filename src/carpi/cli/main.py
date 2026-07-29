@@ -19,6 +19,7 @@ import click
 from carpi import __version__
 from carpi.core.database import Database, DefinitionError, defs_root
 from carpi.core.scan import scan_vehicle
+from carpi.core.storage import write_private
 from carpi.core.transport.base import TransportError
 from carpi.core.transport.canbus import DEFAULT_BITRATE, CanLink
 from carpi.report.text import render_json, render_text
@@ -69,8 +70,10 @@ def _emit(result, evaluation, output_format: str, out: Path | None, verbose: boo
     else:
         text = render_text(result, evaluation, verbose=verbose)
     if out is not None:
-        out.write_text(text + "\n", encoding="utf-8")
-        click.echo(f"written to {out}", err=True)
+        # A report contains the VIN, which identifies one car and its owner, so it is
+        # written owner-only rather than with whatever the umask happens to be.
+        write_private(out, text + "\n")
+        click.echo(f"written to {out} (readable only by you)", err=True)
     else:
         click.echo(text)
 
@@ -115,7 +118,9 @@ def cli(verbose: int) -> None:
     type=float,
     default=None,
     metavar="KM",
-    help="Advertised mileage, enabling the odometer cross-check.",
+    # The unit is stated because a figure given in miles does not fail: it produces a
+    # confident cross-check against the wrong number, on the one finding a buyer acts on.
+    help="Advertised mileage in KILOMETRES, enabling the odometer cross-check.",
 )
 @click.option("--timeout", type=float, default=1.0, show_default=True, help="Per-request timeout.")
 @click.option(
@@ -139,6 +144,11 @@ def cli(verbose: int) -> None:
     is_flag=True,
     help="Skip manufacturer reads entirely; generic OBD-II only.",
 )
+@click.option(
+    "--discover",
+    is_flag=True,
+    help="Also sweep for modules outside the OBD-II range and identify them.",
+)
 def scan(
     transport: str,
     channel: str | None,
@@ -153,10 +163,14 @@ def scan(
     detail: bool,
     profile_id: str | None,
     no_profile: bool,
+    discover: bool,
 ) -> None:
     """Scan a vehicle and report on it.
 
-    On a real car, confirm the bus is healthy before running this:
+    `carpi guide` does all of this with the checks performed for you. Use this when you
+    already know the interface is up and the bus is healthy.
+
+    On a real car, confirm that first:
 
         sudo ip link set can0 type can bitrate 500000 listen-only on
         sudo ip link set up can0
@@ -164,6 +178,10 @@ def scan(
 
     Then bring the interface up without listen-only and scan. Ignition ON, not
     accessory -- many modules stay asleep in accessory mode and will not answer.
+
+    Generic OBD-II reaches eight modules. `--discover` sweeps for the rest and reads each
+    one's standardised identification, including its VIN -- so a module fitted from another
+    car shows up without any definition file for the vehicle. It adds most of a minute.
     """
     database = _load_database(defs)
     profile = None if no_profile else _resolve_profile(database, profile_id)
@@ -175,6 +193,8 @@ def scan(
                 claimed_odometer_km=odometer,
                 timeout=timeout,
                 profile=profile,
+                discover=discover,
+                on_progress=lambda message: click.echo(f"  {message}", err=True),
             )
     except TransportError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -204,7 +224,8 @@ def scan(
     "--odometer",
     type=float,
     default=None,
-    help="Override the scenario's advertised mileage.",
+    metavar="KM",
+    help="Override the scenario's advertised mileage, in kilometres.",
 )
 def demo(
     scenario: str,
@@ -371,11 +392,15 @@ def list_scenarios() -> None:
 # part of car-pi that can change a car, and they live where that is unmissable.
 def _register_vag_commands() -> None:
     from carpi.cli.bench import bench
+    from carpi.cli.guide import guide
     from carpi.cli.vag import coding, vag
 
     cli.add_command(vag)
     cli.add_command(coding)
     cli.add_command(bench)
+    # The guided menu drives the commands above rather than adding anything of its own,
+    # so it is registered last, alongside them.
+    cli.add_command(guide)
 
 
 @cli.group()
@@ -390,6 +415,62 @@ def uds() -> None:
     (WriteDataByIdentifier, RoutineControl, SecurityAccess, ECUReset, the transfer
     services) are not implemented, and a test asserts none reaches the bus.
     """
+
+
+def _hex(value: str, what: str) -> int:
+    """Parse a hex option, naming the option when it is wrong.
+
+    Every arbitration ID and identifier on this command line is typed by hand from another
+    command's output, so a transposed digit is the expected mistake rather than a rare one.
+    Left unguarded, ``int(value, 16)`` reports it as a Python traceback, which tells the
+    reader nothing about which of the four hex options they mistyped.
+    """
+    try:
+        return int(value, 16)
+    except (TypeError, ValueError):
+        raise click.ClickException(
+            f"{what} must be a hex number such as 0x714, not {value!r}."
+        ) from None
+
+
+def _address(request_id: str, response_id: str | None, *, extended: bool) -> Any:
+    """Build an ECU address from what the user typed, accepting what discovery printed.
+
+    ``carpi uds discover`` labels each module it finds as ``714/77E``, and the next command
+    then wants those two halves as separate hex options. Copying them across by hand is
+    where a digit gets transposed, so the label form is accepted directly.
+
+    The response ID may also be omitted inside the OBD-II range, where ISO 15765-4 fixes
+    it at the request ID plus eight. Outside that range there is no convention to rely on,
+    so it is required rather than guessed -- a wrong response ID does not fail cleanly, it
+    listens to the wrong module.
+    """
+    from carpi.core.transport.base import (
+        RESPONSE_BASE_11BIT,
+        EcuAddress,
+    )
+
+    if "/" in request_id and response_id is None:
+        left, _, right = request_id.partition("/")
+        return EcuAddress(
+            tx_id=_hex(left, "--request-id"),
+            rx_id=_hex(right, "--request-id"),
+            extended=extended,
+        )
+
+    tx_id = _hex(request_id, "--request-id")
+    if response_id is not None:
+        return EcuAddress(tx_id=tx_id, rx_id=_hex(response_id, "--response-id"), extended=extended)
+
+    # 0x7E0-0x7E7 request, 0x7E8-0x7EF response. The only pairing any standard promises.
+    if not extended and RESPONSE_BASE_11BIT - 8 <= tx_id <= RESPONSE_BASE_11BIT - 1:
+        return EcuAddress(tx_id=tx_id, rx_id=tx_id + 8, extended=extended)
+
+    raise click.ClickException(
+        f"--response-id is required for 0x{tx_id:X}. Only the OBD-II range 0x7E0-0x7E7 has "
+        f"a standard reply address. Use the pair that 'uds discover' printed, either as "
+        f"--request-id 0x{tx_id:X} --response-id 0xNNN or as --request-id {tx_id:03X}/NNN."
+    )
 
 
 def _open_link(
@@ -465,6 +546,14 @@ def _with_bus_options(command: Any) -> Any:
     help="Seconds to watch the bus before transmitting. 0 to skip.",
 )
 @click.option("--delay", type=float, default=0.02, show_default=True, help="Between probes.")
+@click.option(
+    "--probe",
+    "probe_name",
+    type=click.Choice(["tester-present", "read-vin"]),
+    default="tester-present",
+    show_default=True,
+    help="tester-present is the most inert. read-vin finds modules that ignore it.",
+)
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
 def uds_discover(
     transport: str,
@@ -478,6 +567,7 @@ def uds_discover(
     high: str,
     observe: float,
     delay: float,
+    probe_name: str,
     yes: bool,
 ) -> None:
     """Find every module that answers, including outside the OBD-II range.
@@ -486,12 +576,16 @@ def uds_discover(
     generic OBD-II never speaks to. There is no standard map of their addresses, so they
     are found by probing.
 
-    Each probe is a TesterPresent request -- the most inert message in UDS, which cannot
-    change anything. Do it with the vehicle stationary anyway.
-    """
-    from carpi.core.discovery import observe_traffic, sweep_addresses
+    By default each probe is a TesterPresent request -- the most inert message in UDS,
+    which cannot change anything. Do it with the vehicle stationary anyway.
 
-    first, last = int(low, 16), int(high, 16)
+    Some modules answer ReadDataByIdentifier while ignoring TesterPresent outside a
+    session, so a module missing from one sweep may still appear in a `--probe read-vin`
+    one. Both requests are reads.
+    """
+    from carpi.core.discovery import PROBES, observe_traffic, sweep_addresses
+
+    first, last = _hex(low, "--low"), _hex(high, "--high")
     is_real = transport == "socketcan"
 
     if is_real and not yes:
@@ -524,6 +618,7 @@ def uds_discover(
             link,
             low=first,
             high=last,
+            probe=PROBES[probe_name],
             request_delay=delay,
             on_progress=lambda message: click.echo(f"  {message}", err=True),
         )
@@ -533,6 +628,7 @@ def uds_discover(
             {
                 "schema": "carpi.discovery/1",
                 "probed": stats.probed,
+                "probe": probe_name,
                 "elapsed_seconds": round(stats.elapsed, 2),
                 "modules": [module.as_dict() for module in stats.modules],
             },
@@ -543,8 +639,16 @@ def uds_discover(
 
 @uds.command("read")
 @_with_bus_options
-@click.option("--request-id", required=True, help="Address to send to, e.g. 0x714.")
-@click.option("--response-id", required=True, help="Address it replies on, e.g. 0x77E.")
+@click.option(
+    "--request-id",
+    required=True,
+    help="Address to send to, e.g. 0x714, or the 714/77E pair discover printed.",
+)
+@click.option(
+    "--response-id",
+    default=None,
+    help="Address it replies on, e.g. 0x77E. Optional inside the OBD-II range.",
+)
 @click.option("--did", "dids", multiple=True, required=True, help="Identifier, e.g. 0xF190.")
 @click.option(
     "--session",
@@ -561,17 +665,16 @@ def uds_read(
     timeout: float,
     scenario: str,
     request_id: str,
-    response_id: str,
+    response_id: str | None,
     dids: tuple[str, ...],
     session: str,
 ) -> None:
     """Read specific data identifiers from one module."""
     from carpi.core.didscan import STATUS_DATA, DidObservation
     from carpi.core.protocol.uds import DiagnosticSession, UdsClient
-    from carpi.core.transport.base import EcuAddress
 
-    address = EcuAddress(tx_id=int(request_id, 16), rx_id=int(response_id, 16), extended=extended)
-    wanted = [int(value, 16) for value in dids]
+    address = _address(request_id, response_id, extended=extended)
+    wanted = [_hex(value, "--did") for value in dids]
 
     with _open_link(
         transport, channel, bitrate=bitrate, extended=extended, fd=fd, scenario=scenario
@@ -595,7 +698,7 @@ def uds_read(
 @uds.command("identify")
 @_with_bus_options
 @click.option("--request-id", required=True)
-@click.option("--response-id", required=True)
+@click.option("--response-id", default=None)
 def uds_identify(
     transport: str,
     channel: str | None,
@@ -605,7 +708,7 @@ def uds_identify(
     timeout: float,
     scenario: str,
     request_id: str,
-    response_id: str,
+    response_id: str | None,
 ) -> None:
     """Read a module's ISO 14229 identification block.
 
@@ -614,9 +717,8 @@ def uds_identify(
     recently on a high-mileage car is worth asking about.
     """
     from carpi.core.protocol.uds import UdsClient
-    from carpi.core.transport.base import EcuAddress
 
-    address = EcuAddress(tx_id=int(request_id, 16), rx_id=int(response_id, 16), extended=extended)
+    address = _address(request_id, response_id, extended=extended)
     with _open_link(
         transport, channel, bitrate=bitrate, extended=extended, fd=fd, scenario=scenario
     ) as link:
@@ -632,7 +734,7 @@ def uds_identify(
 @uds.command("dtcs")
 @_with_bus_options
 @click.option("--request-id", required=True)
-@click.option("--response-id", required=True)
+@click.option("--response-id", default=None)
 @click.option(
     "--mask",
     default="0xFF",
@@ -648,7 +750,7 @@ def uds_dtcs(
     timeout: float,
     scenario: str,
     request_id: str,
-    response_id: str,
+    response_id: str | None,
     mask: str,
 ) -> None:
     """Read manufacturer fault codes from one module.
@@ -657,15 +759,14 @@ def uds_dtcs(
     subset from the powertrain modules.
     """
     from carpi.core.protocol.uds import UdsClient
-    from carpi.core.transport.base import EcuAddress
 
-    address = EcuAddress(tx_id=int(request_id, 16), rx_id=int(response_id, 16), extended=extended)
+    address = _address(request_id, response_id, extended=extended)
     with _open_link(
         transport, channel, bitrate=bitrate, extended=extended, fd=fd, scenario=scenario
     ) as link:
         client = UdsClient(link.channel(address), timeout=timeout)
         client.start_session()
-        codes = client.read_dtcs(int(mask, 16))
+        codes = client.read_dtcs(_hex(mask, "--mask"))
 
     if not codes:
         click.echo("no fault codes matched")
@@ -677,7 +778,7 @@ def uds_dtcs(
 @uds.command("scan-dids")
 @_with_bus_options
 @click.option("--request-id", required=True)
-@click.option("--response-id", required=True)
+@click.option("--response-id", default=None)
 @click.option(
     "--ranges",
     default=None,
@@ -699,7 +800,7 @@ def uds_scan_dids(
     timeout: float,
     scenario: str,
     request_id: str,
-    response_id: str,
+    response_id: str | None,
     ranges: str | None,
     delay: float,
     out: Path | None,
@@ -716,10 +817,14 @@ def uds_scan_dids(
     """
     from carpi.core.didscan import INTERESTING_RANGES, parse_ranges, scan_dids
     from carpi.core.protocol.uds import UdsClient
-    from carpi.core.transport.base import EcuAddress
 
-    wanted = parse_ranges(ranges) if ranges else INTERESTING_RANGES
-    address = EcuAddress(tx_id=int(request_id, 16), rx_id=int(response_id, 16), extended=extended)
+    try:
+        wanted = parse_ranges(ranges) if ranges else INTERESTING_RANGES
+    except ValueError as exc:
+        raise click.ClickException(
+            f"--ranges must look like '0x2200-0x22ff,0xf190': {exc}"
+        ) from None
+    address = _address(request_id, response_id, extended=extended)
 
     with _open_link(
         transport, channel, bitrate=bitrate, extended=extended, fd=fd, scenario=scenario
@@ -740,8 +845,10 @@ def uds_scan_dids(
 
     document = report.as_dict(anonymise=anonymise)
     if out is not None:
-        out.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-        click.echo(f"written to {out}", err=True)
+        # Owner-only: an un-anonymised sweep carries the VIN, and every payload the
+        # module returned.
+        write_private(out, json.dumps(document, indent=2) + "\n")
+        click.echo(f"written to {out} (readable only by you)", err=True)
         if report.vin and not anonymise:
             # Said plainly, because a scan posted to a public issue tracker identifies
             # one physical car and, through it, a person.
@@ -789,6 +896,196 @@ def defs_facts(defs_path: Path | None) -> None:
         for name in sorted(rule.required_facts):
             facts.setdefault(name, []).append(rule.id)
     click.echo(json.dumps(facts, indent=2, sort_keys=True))
+
+
+def _load_sweep(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"could not read {path}: {exc}") from None
+
+
+@defs.command("compare")
+@click.argument("before", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("after", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--expect-delta",
+    type=float,
+    default=None,
+    metavar="AMOUNT",
+    help="How much the thing you changed moved by, e.g. 1.2 for 1.2 km driven.",
+)
+@click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
+@click.option("--top", type=int, default=20, show_default=True, help="How many to show.")
+def defs_compare(
+    before: Path, after: Path, expect_delta: float | None, output_format: str, top: int
+) -> None:
+    """Find which identifiers changed between two sweeps of the same module.
+
+    The way to identify an unknown identifier is to sweep, change one thing about the car,
+    sweep again, and see what moved by the right amount. This does the comparing.
+
+        carpi uds scan-dids --request-id 714/77E --out before.json
+        # drive 1.2 km
+        carpi uds scan-dids --request-id 714/77E --out after.json
+        carpi defs compare before.json after.json --expect-delta 1.2
+
+    You should see a ranked list, best candidate first, with the units each identifier
+    would have to be counting in for it to be the one you are looking for.
+
+    These are candidates, not answers. Confirming one still needs a second car of the same
+    platform whose true state you know independently -- one car can agree with a wrong
+    guess by coincidence.
+    """
+    from carpi.core.candidates import DraftError, compare_sweeps
+
+    try:
+        candidates = compare_sweeps(_load_sweep(before), _load_sweep(after), expected=expect_delta)
+    except DraftError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    shown = candidates[: max(top, 1)]
+    if output_format == "json":
+        click.echo(
+            json.dumps(
+                {
+                    "schema": "carpi.candidates/1",
+                    "before": str(before),
+                    "after": str(after),
+                    "expected_delta": expect_delta,
+                    "changed": len(candidates),
+                    "candidates": [candidate.as_dict() for candidate in shown],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    if not candidates:
+        click.echo("No identifier changed between the two sweeps.")
+        click.echo("Either nothing you changed is recorded here, or the change was too small.")
+        return
+
+    click.echo(f"{len(candidates)} identifier(s) changed. Best candidates first:")
+    click.echo()
+    for candidate in shown:
+        line = f"  {candidate.label}  {candidate.before} -> {candidate.after}"
+        line += f"  delta {candidate.delta:+d}"
+        if candidate.familiar_scale is not None:
+            line += f"   <- counts {candidate.familiar_scale:g} per unit"
+        elif candidate.implied_scale is not None:
+            line += f"   ({candidate.implied_scale:.4g} per count)"
+        click.echo(line)
+    click.echo()
+    click.echo("These are candidates, not conclusions. Confirm against a second car of the")
+    click.echo("same platform before treating any of them as identified.")
+
+
+@defs.command("draft")
+@click.argument("sweeps", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--id", "profile_id", required=True, help="Profile id, e.g. vw-mqb.")
+@click.option("--make", required=True, help="Manufacturer, e.g. Volkswagen.")
+@click.option("--platform", required=True, help="Platform or model, e.g. MQB.")
+@click.option("-o", "--out", type=click.Path(dir_okay=False, path_type=Path), default=None)
+def defs_draft(
+    sweeps: tuple[Path, ...], profile_id: str, make: str, platform: str, out: Path | None
+) -> None:
+    """Turn module sweeps into a starting-point vehicle definition file.
+
+        carpi defs draft cluster.json --id vw-mqb --make Volkswagen --platform MQB
+
+    You should see YAML listing every identifier the sweep found, each marked TODO.
+
+    Every read is emitted at 'community' confidence with a TODO name, because a sweep
+    proves an identifier exists and nothing whatsoever about what it holds. Naming one
+    'odometer_km' is a claim, and only somebody with the car can make it.
+
+    This writes to where you tell it and never into the shipped database. An unverified
+    entry there is worse than a missing one: a wrong odometer identifier returns plausible
+    bytes that decode to a plausible mileage.
+    """
+    from carpi.core.candidates import DraftError, draft_profile, dump_yaml
+
+    try:
+        document = draft_profile(
+            [_load_sweep(path) for path in sweeps],
+            profile_id=profile_id,
+            make=make,
+            platform=platform,
+        )
+    except DraftError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    text = dump_yaml(document)
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+        click.echo(f"written to {out}", err=True)
+        click.echo(
+            "Every read is a TODO until you have proven it against the car. See "
+            "docs/contribute-vehicle-data.md.",
+            err=True,
+        )
+    else:
+        click.echo(text)
+
+
+@defs.command("contribute")
+@click.argument("files", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("-o", "--out", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--yes", is_flag=True, help="Skip the licence confirmation.")
+def defs_contribute(files: tuple[Path, ...], out: Path | None, yes: bool) -> None:
+    """Turn saved scans and sweeps into something you can offer to the project.
+
+        carpi scan --channel can0 --discover --format json -o car.json
+        carpi defs contribute car.json
+
+    You should see a file naming which identifiers exist, and a link that opens a prefilled
+    issue. Nothing is uploaded by this command.
+
+    The file carries no values, no serial numbers and no VIN -- only the platform prefix of
+    the VIN, which modules answered, and which identifiers exist with their length and type.
+    Values are dropped rather than scrubbed: removing a VIN from a sweep still leaves the
+    part numbers and programming dates, and those together identify one physical car.
+
+    Sharing is a licence grant, so it asks first.
+    """
+    from carpi.core.candidates import DraftError, LeakedValue, issue_url, observe
+
+    documents = [_load_sweep(path) for path in files]
+    try:
+        observation = observe(documents)
+    except DraftError as exc:
+        raise click.ClickException(str(exc)) from None
+    except LeakedValue as exc:  # pragma: no cover - a bug if it ever fires
+        raise click.ClickException(str(exc)) from None
+
+    counted = sum(len(module["identifiers"]) for module in observation["modules"])
+    prefix = observation["vin_prefix"] or "unknown"
+
+    click.echo(f"Platform: {prefix}", err=True)
+    click.echo(
+        f"{len(observation['modules'])} module(s), {counted} identifier(s) that exist.",
+        err=True,
+    )
+    click.echo("No values, no serial numbers and no VIN are included.", err=True)
+    click.echo(err=True)
+
+    target = out or Path(f"contribution-{prefix.lower()}.json")
+    if not yes:
+        click.echo(
+            "Sharing this contributes it to the definition database under CC-BY-SA-4.0,\n"
+            "which cannot be withdrawn later. If the car is not yours, ask the owner first.",
+            err=True,
+        )
+        if not click.confirm(f"Write {target}?", default=True, err=True):
+            return
+
+    target.write_text(json.dumps(observation, indent=2) + "\n", encoding="utf-8")
+    click.echo(f"written to {target}", err=True)
+    click.echo("Nothing has been sent.", err=True)
+    click.echo(err=True)
+    click.echo("Read the file, then open this to offer it:", err=True)
+    click.echo(issue_url(observation))
 
 
 def main() -> int:

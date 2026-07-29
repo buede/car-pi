@@ -10,7 +10,8 @@
 **On this page**
 - Before you go
 - Two things to remember at the car
-- At the car, in order
+- At the car, the short way
+- At the car, by hand
 - Read the report on your phone
 - During the test drive
 - What the report is telling you
@@ -18,7 +19,8 @@
 ## Before you go
 
 - Charge the battery bank. A thorough scan takes several minutes.
-- Find out the advertised mileage. You will pass it to the scan so it can be cross-checked.
+- Find out the advertised mileage, in kilometres. You will pass it to the scan so it can be
+  cross-checked.
 - Check the unit boots and serves its interface. Do this at home, not in a car park.
 
 ## Two things to remember at the car
@@ -30,7 +32,23 @@ These two mistakes account for most failed inspections.
 2. **Turn the ignition ON, not accessory.** Many modules stay asleep in accessory mode and
    will not answer at all.
 
-## At the car, in order
+## At the car, the short way
+
+One command does every step below, and checks each one.
+
+```bash
+carpi guide
+```
+
+You should see a menu. Choose **inspect a car** and answer the questions.
+
+It finds the interface, brings the bus up, listens to check the bus is healthy before
+transmitting anything, and then scans. It prints the equivalent command at each step, so
+you can do it by hand next time.
+
+## At the car, by hand
+
+Do this if you would rather run each step yourself. It is the same sequence the guide runs.
 
 Do not skip step 2. It is the step that tells you the bus is what you think it is, before
 your unit transmits anything.
@@ -61,7 +79,7 @@ If you see nothing at all, or a flood of error frames, stop and see
 sudo systemctl restart carpi-can
 ```
 
-**4. Scan, telling it the advertised mileage.**
+**4. Scan, telling it the advertised mileage in kilometres.**
 
 ```bash
 carpi scan --channel can0 --odometer 145000
@@ -69,6 +87,15 @@ carpi scan --channel can0 --odometer 145000
 
 You should see a report ordered worst finding first. Add `--format json -o car.json` to keep
 a copy.
+
+**5. Optionally, reach the modules OBD-II cannot.**
+
+```bash
+carpi scan --channel can0 --odometer 145000 --discover
+```
+
+You should see modules outside the OBD-II range, including the instrument cluster, with the
+VIN each one holds. This adds most of a minute.
 
 ## Read the report on your phone
 

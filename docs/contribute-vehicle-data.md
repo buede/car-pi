@@ -14,6 +14,9 @@
 - What is worth chasing first
 - Before you share a scan
 
+> **Careful:** nothing car-pi generates is a finding. A drafted definition is a list of
+> identifiers that exist, with no claim about what any of them hold.
+
 ## Why this database is nearly empty
 
 Manufacturer data identifiers cannot be verified without the car in front of you.
@@ -34,6 +37,18 @@ never match a real vehicle.
 `src/carpi/defs/schema/vehicle.schema.json`.
 
 The file format is described in [definition files](definition-files.md).
+
+To start from a sweep rather than an empty file:
+
+```bash
+carpi defs draft cluster.json --id vw-mqb --make Volkswagen --platform MQB -o mqb.yaml
+```
+
+You should see a file listing every identifier the sweep found, each marked `TODO`.
+
+Every read it writes is `community` confidence with a `TODO` name, because a sweep proves an
+identifier exists and nothing at all about what it holds. Naming one `odometer_km` is a
+claim, and only you, with the car, can make it.
 
 ## Step 1: find what a module holds
 
@@ -66,7 +81,8 @@ carpi uds scan-dids --channel can0 --request-id 0x714 --response-id 0x77E --out 
 
 ## Step 2: prove which identifier it is
 
-This step cannot be automated. It is the part that makes a contribution trustworthy.
+**Confirming an identifier cannot be automated.** That is the part that makes a
+contribution trustworthy. Comparing the sweeps can be, and is.
 
 1. **Record a sweep.** Save the output.
 2. **Change one thing about the car.** Drive a kilometre. Turn on the lights. Let the fuel
@@ -77,6 +93,18 @@ This step cannot be automated. It is the part that makes a contribution trustwor
    independently.
 
 Step 4 is not optional. One car can agree with a wrong guess by coincidence. Two rarely do.
+
+For step 3, tell car-pi how much the thing you changed moved by:
+
+```bash
+carpi defs compare before.json after.json --expect-delta 1.2
+```
+
+You should see a ranked list, best candidate first, with the units each identifier would
+have to be counting in for it to be the one you want.
+
+That ranking is arithmetic, not a conclusion. An identifier that moved by the right amount
+once is a candidate. Step 4 is what turns it into a fact.
 
 To check a single candidate quickly without a full sweep:
 
@@ -107,12 +135,37 @@ Ordered by how much it matters when buying a used car.
 > **Do not:** attach a raw sweep to a public issue. It contains the VIN, which identifies one
 > physical car and, through it, a person.
 
-Use `--anonymise`, which removes the VIN and redacts any value containing it:
+The safe way is to share a **contribution**, which carries shapes and no contents:
 
 ```bash
-carpi uds scan-dids --channel can0 --request-id 0x714 --response-id 0x77E \
-    --anonymise --out cluster.json
+carpi defs contribute cluster.json car.json
 ```
+
+You should see a summary, a written file, and a link that opens a prefilled issue. Nothing is
+uploaded by that command.
+
+A contribution keeps the first eight characters of the VIN, which identify the platform, the
+address of each module that answered, and which identifiers exist with their length and type.
+It keeps **no values at all**.
+
+Values are dropped rather than scrubbed. Removing a VIN from a sweep still leaves the part
+numbers, the serial numbers and the programming dates, and those together identify one car.
+Dropping contents needs no judgement about which values happen to be sensitive.
+
+Read the file before you attach it. Sharing it contributes to the database under
+**CC-BY-SA-4.0**, which cannot be withdrawn afterwards.
+
+> **Do not:** share a contribution from a car you do not own without asking the owner. It
+> describes their car, and the licence is permanent.
+
+If you do need to share a raw sweep, `--anonymise` removes the VIN and redacts any value
+containing it:
+
+```bash
+carpi uds scan-dids --channel can0 --request-id 714/77E --anonymise --out cluster.json
+```
+
+That is weaker than a contribution, because it removes only the VIN.
 
 `.gitignore` already excludes `scans/`, `*.candump`, `*.asc` and `*.blf` so raw logs are not
 committed by accident.

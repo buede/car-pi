@@ -11,6 +11,7 @@
 - What has not been proven yet
 - One inspection at a time
 - There is no password
+- What ends up on your disk
 - Asking, and the law
 - What is out of scope
 
@@ -61,6 +62,15 @@ does not fail loudly. It returns plausible bytes that decode to a plausible mile
 somebody buys a car on the strength of it. Nothing enters the database that was not
 confirmed against a real car. See [contribute vehicle data](contribute-vehicle-data.md).
 
+**Fault codes are not described individually.** car-pi says which part of the car a code
+concerns and whether it is standardised, both of which are readable from the code itself. It
+does not tell you that `P0420` means a spent catalytic converter.
+
+That is deliberate. A per-code description table would have to cover the manufacturer-specific
+ranges to be worth having, and there the same code means different faults on different makes.
+A wrong description does not fail loudly — it sends somebody to replace the wrong part. So
+car-pi says what the standard says and stops.
+
 **Coding coverage will always be narrow.** It is per-make, per-platform, per-generation.
 Read-only diagnostics are the part that generalises.
 
@@ -87,6 +97,26 @@ failure mode changes from "somebody on your hotspot reads your fuel trims" to "s
 your hotspot reconfigures your ABS".
 
 Coding is command-line only, at a keyboard, by whoever owns the car.
+
+## What ends up on your disk
+
+A scan is not a neutral document. It contains the VIN, which identifies one physical car and,
+through it, a person.
+
+So anything car-pi writes containing vehicle data is **readable only by you**, in a directory
+readable only by you. That covers reports, identifier sweeps and coding restore points. A
+restore point is the most sensitive of them, because it also holds the module's login code.
+
+Reports and sweeps default to a path under `~/.carpi` rather than to the directory you happen
+to be in. A bare filename in a checkout is one `git add -A` away from publishing a real car's
+VIN, and `.gitignore` covers the names car-pi suggests as a backstop.
+
+A **contribution** is the exception, and deliberately so: it carries no values, no serial
+numbers and no VIN, so it is written with ordinary permissions because it exists to be shared.
+See [contribute vehicle data](contribute-vehicle-data.md).
+
+This is not encryption. It addresses the ordinary risk — a shared machine, a backup that
+copies your home directory, a file forgotten in a working copy.
 
 ## Asking, and the law
 

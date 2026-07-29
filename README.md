@@ -36,6 +36,8 @@ cd car-pi
 You should see an inspection report for a simulated car, worst finding first. The first run
 builds a container image, so it takes a few minutes.
 
+At a real car, `carpi guide` asks questions instead of taking flags, and checks each step.
+
 ## What it can tell you
 
 - **Permanent fault codes** that no scan tool can erase, so they survive a wipe.
@@ -93,7 +95,7 @@ of it. Nothing enters it unconfirmed — see
 
 **Reference**
 
-- [command reference](docs/commands.md) — all 22 commands
+- [command reference](docs/commands.md) — all 26 commands
 - [glossary](docs/glossary.md) — DTC, PID, DID and the rest
 - [definition files](docs/definition-files.md) — the database formats
 - [contribute vehicle data](docs/contribute-vehicle-data.md) — turning a car into a definition

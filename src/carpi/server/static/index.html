@@ -21,31 +21,78 @@
 <body>
   <header class="bar">
     <h1>car-pi</h1>
+    <!-- The strongest claim this project has, and until now it appeared only in the
+         OpenAPI description and the install manifest -- neither of which is visible while
+         using the app. It is the reason a stranger should be willing to let you plug in,
+         so it belongs where both of you can see it. -->
+    <span class="chip readonly" title="This interface cannot write to a vehicle">read-only</span>
     <span id="interface" class="chip" title="Which interface this unit is using">…</span>
   </header>
 
+  <!--
+    Shown once, then dismissed to localStorage. Every fact in here already existed in
+    docs/limits-and-safety.md, which is exactly the problem: somebody handed this unit and
+    told to join its hotspot never opens that file. A disclaimer in a document nobody read
+    informs nobody.
+  -->
+  <div id="first-run" class="card notice" hidden>
+    <h2>Before you start</h2>
+    <p><strong>This tool reads. It cannot change anything in a car.</strong> The services
+      that could write, and the one that clears fault codes, are not implemented at all.</p>
+    <p><strong>Ask the owner before plugging into a car that is not yours.</strong> Reads are
+      non-invasive, but it is still someone else's property.</p>
+    <p>car-pi is pre-alpha, and its vehicle database is nearly empty on purpose. A question
+      the car does not answer is reported as <em>not assessed</em>, never as a pass.
+      <strong>Absence of a finding is not evidence of a sound car.</strong></p>
+    <button id="first-run-ok" class="primary">I understand</button>
+  </div>
+
   <nav class="tabs" role="tablist">
-    <button role="tab" class="tab active" data-view="scan" aria-selected="true">Inspect</button>
-    <button role="tab" class="tab" data-view="live" aria-selected="false">Live</button>
-    <button role="tab" class="tab" data-view="history" aria-selected="false">History</button>
+    <button role="tab" id="tab-scan" class="tab active" data-view="scan"
+            aria-selected="true" aria-controls="view-scan" tabindex="0">Inspect</button>
+    <button role="tab" id="tab-live" class="tab" data-view="live"
+            aria-selected="false" aria-controls="view-live" tabindex="-1">Live</button>
+    <button role="tab" id="tab-history" class="tab" data-view="history"
+            aria-selected="false" aria-controls="view-history" tabindex="-1">History</button>
   </nav>
 
   <main>
     <!-- Inspect -->
-    <section id="view-scan" class="view active">
+    <section id="view-scan" class="view active" role="tabpanel" aria-labelledby="tab-scan">
       <div class="card">
-        <label for="odometer">Advertised mileage <span class="hint">optional</span></label>
+        <!-- The unit is in the label, not only the hint. The cross-check is the headline
+             feature, and a figure entered in miles produces a wrong answer rather than an
+             error -- so the reader must not have to look anywhere to learn which is wanted. -->
+        <label for="odometer">Advertised mileage in km <span class="hint">optional</span></label>
         <input id="odometer" type="number" inputmode="numeric" min="0" step="1000"
                placeholder="e.g. 145000" aria-describedby="odometer-hint">
         <p id="odometer-hint" class="hint">
-          Enter what the seller claims, and the report will cross-check it against what
-          the engine controller actually holds. Mileage tampering usually only rewrites
-          the instrument cluster.
+          Enter what the seller claims, <strong>in kilometres</strong>, and the report will
+          cross-check it against what the engine controller actually holds. Mileage tampering
+          usually only rewrites the instrument cluster.
         </p>
         <button id="start" class="primary">Start inspection</button>
+        <p id="bus-status" class="hint" aria-live="polite"></p>
         <p class="hint">
           Ignition ON, not accessory — many modules stay asleep in accessory mode.
         </p>
+        <!-- The two mistakes the documentation says account for most failed inspections
+             are both detectable by listening, before anything is transmitted. Stating them
+             in a hint was never the same as checking them. -->
+        <button id="preflight">Check the bus first</button>
+        <p id="preflight-result" class="hint" aria-live="polite"></p>
+      </div>
+
+      <div id="checks" class="card">
+        <h2>What will be checked</h2>
+        <p class="hint">
+          Every check car-pi knows about, worst first. A check whose data this car does not
+          report is reported as not assessed rather than passed.
+        </p>
+        <details>
+          <summary>Show the list</summary>
+          <div id="rules"></div>
+        </details>
       </div>
 
       <div id="progress" class="card" hidden>
@@ -58,7 +105,7 @@
     </section>
 
     <!-- Live -->
-    <section id="view-live" class="view">
+    <section id="view-live" class="view" role="tabpanel" aria-labelledby="tab-live">
       <div class="card">
         <button id="live-toggle" class="primary">Start live values</button>
         <p class="hint">
@@ -72,7 +119,7 @@
     </section>
 
     <!-- History -->
-    <section id="view-history" class="view">
+    <section id="view-history" class="view" role="tabpanel" aria-labelledby="tab-history">
       <div class="card">
         <button id="refresh-history">Refresh</button>
         <p class="hint">Scans are kept in memory and are lost when the unit powers down.
