@@ -12,6 +12,7 @@ import json
 import textwrap
 from typing import Any
 
+from carpi.core.protocol.dtc import DtcMeaning, describe_dtc
 from carpi.core.rules import Evaluation
 from carpi.core.scan import ScanResult, build_facts
 
@@ -87,6 +88,7 @@ def render_text(result: ScanResult, evaluation: Evaluation, *, verbose: bool = F
     lines.extend(_header(result))
     lines.extend(_findings(evaluation))
     lines.extend(_not_assessed(evaluation))
+    lines.extend(_rule_errors(evaluation))
     lines.extend(_fault_codes(result))
     lines.extend(_module_data(result))
     lines.extend(_monitors(result))
@@ -118,6 +120,18 @@ def _findings(evaluation: Evaluation) -> list[str]:
     if not evaluation.findings:
         lines.append("")
         lines.append(_wrap("No findings. Every check that could be run came back clean."))
+        # Unqualified, that sentence reads as a verdict on the car. It is only a verdict on
+        # the checks that ran, and a scan of a silent bus runs none of them -- which is the
+        # single most misleading thing this report could say to somebody buying a car.
+        unavailable = len([s for s in evaluation.skipped if s.missing])
+        if unavailable:
+            lines.append("")
+            lines.append(
+                _wrap(
+                    f"{unavailable} check(s) could not be run at all. Read 'Not assessed' "
+                    f"below before treating this as a clean car."
+                )
+            )
         return lines
 
     for finding in evaluation.findings:
@@ -164,6 +178,33 @@ def _not_assessed(evaluation: Evaluation) -> list[str]:
     return lines
 
 
+def _rule_errors(evaluation: Evaluation) -> list[str]:
+    """Checks that threw while being evaluated.
+
+    A rule that raised is counted as neither passed, failed nor not-assessed, so without
+    this section it disappears from the report entirely. That is the one remaining way a
+    question could go unanswered without the reader being told, which is the failure this
+    whole report engine exists to prevent. It is a defect in car-pi, not a fact about the
+    car, and it is labelled as such.
+    """
+    if not evaluation.errors:
+        return []
+    lines = _rule("Checks that could not be evaluated")
+    lines.append("")
+    lines.append(
+        _wrap(
+            "These checks failed to run because of a fault in car-pi itself, not in the "
+            "vehicle. They are counted nowhere above. Please report them.",
+            indent="",
+        )
+    )
+    for rule_id, message in evaluation.errors:
+        lines.append("")
+        lines.append(f"  - {rule_id}")
+        lines.append(_wrap(message, indent=_INDENT + "  "))
+    return lines
+
+
 def _fault_codes(result: ScanResult) -> list[str]:
     lines = _rule("Fault codes")
     any_codes = False
@@ -184,6 +225,26 @@ def _fault_codes(result: ScanResult) -> list[str]:
     if not any_codes:
         lines.append("")
         lines.append(f"{_INDENT}None reported by any module.")
+        return lines
+
+    # A bare "P0420" sends the reader to a search engine, which is the one thing they
+    # cannot do here: the unit serves its own hotspot and there is no internet in a car
+    # park. So each distinct code gets what the standard itself says about it -- which
+    # part of the car, and crucially whether a generic description can exist for it at all.
+    seen: dict[str, DtcMeaning] = {}
+    for ecu in result.ecus:
+        for code in (*ecu.permanent_dtcs, *ecu.stored_dtcs, *ecu.pending_dtcs):
+            meaning = describe_dtc(code)
+            if meaning is not None and meaning.code not in seen:
+                seen[meaning.code] = meaning
+
+    if seen:
+        lines.append("")
+        lines.append(f"{_INDENT}What these codes are about:")
+        for code, meaning in sorted(seen.items()):
+            lines.append("")
+            lines.append(f"{_INDENT}{code}")
+            lines.append(_wrap(meaning.summary, indent=_INDENT + "  "))
     return lines
 
 
@@ -312,11 +373,31 @@ def _footer(result: ScanResult, evaluation: Evaluation) -> list[str]:
     lines.append(
         f"{verdict}; {len(evaluation.passed)} checks passed; {unavailable} could not be run"
     )
+    if evaluation.errors:
+        lines.append(
+            f"{len(evaluation.errors)} check(s) could not be evaluated at all -- see above"
+        )
     errors = [error for ecu in result.ecus for error in ecu.errors]
     if errors:
         lines.append(f"{len(errors)} request(s) failed during the scan; re-run with -v for detail")
     lines.append("")
     return lines
+
+
+def _dtc_meanings(ecu: Any) -> dict[str, Any]:
+    """Structural interpretation of every code one module reported, keyed by code."""
+    meanings: dict[str, Any] = {}
+    for code in (*ecu.permanent_dtcs, *ecu.stored_dtcs, *ecu.pending_dtcs):
+        meaning = describe_dtc(code)
+        if meaning is None or meaning.code in meanings:
+            continue
+        meanings[meaning.code] = {
+            "system": meaning.system,
+            "subsystem": meaning.subsystem,
+            "standardised": meaning.standardised,
+            "summary": meaning.summary,
+        }
+    return meanings
 
 
 def to_dict(result: ScanResult, evaluation: Evaluation) -> dict[str, Any]:
@@ -358,6 +439,11 @@ def to_dict(result: ScanResult, evaluation: Evaluation) -> dict[str, Any]:
                     "stored": list(ecu.stored_dtcs),
                     "pending": list(ecu.pending_dtcs),
                     "permanent": list(ecu.permanent_dtcs),
+                    # What SAE J2012 says about each code's structure. Not a fault
+                    # description -- see describe_dtc -- but it is what lets a reader with
+                    # no internet tell an emissions code from a transmission one, and a
+                    # standardised code from one only the manufacturer defines.
+                    "meanings": _dtc_meanings(ecu),
                 },
                 "readings": {
                     name: {

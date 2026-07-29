@@ -74,13 +74,16 @@ at this point is cheaper than a retry.
 `apply` archives the current value first, then writes.
 
 ```bash
-carpi coding apply --module 0x46 --value 0A1B2D --login 13861
+carpi coding apply --module 0x46 --value 0A1B2D
 ```
 
-You will be prompted to type the module's name before anything is written. That is
-deliberate: a yes-or-no prompt can be answered without reading it.
+You will be asked for the login code, then prompted to type the module's name before
+anything is written. Typing the name is deliberate: a yes-or-no prompt can be answered
+without reading it.
 
-`--login` is required here, even if `plan` did not need it.
+`--login` is required here, even if `plan` did not need it. **Leave it off the command line
+and let it prompt.** Passed as an option it is recorded in your shell history and is visible
+in `ps` to anyone else on the machine. The prompt does not echo.
 
 ## Step 4: put it back
 
@@ -89,6 +92,14 @@ Every `apply` leaves a restore point. To see them, newest first:
 ```bash
 carpi coding list-restore-points
 ```
+
+A restore point holds the previous value, the VIN, and the module's login code, because
+putting the value back needs all three. It is written readable only by you, in a directory
+readable only by you.
+
+> **Careful:** on a unit with the read-only overlay enabled, `~/.carpi` is held in RAM and
+> is discarded at reboot. Copy a restore point somewhere permanent before powering down, or
+> the archive is gone.
 
 To put a module back:
 

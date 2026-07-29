@@ -178,6 +178,34 @@ class TestBusExclusivity:
         pytest.skip("the scan finished before the interface state could be observed")
 
 
+class TestPreflight:
+    """Listening before transmitting, on the phone path as well as the command line.
+
+    The alternative is a scan of a silent bus, which succeeds and reports that the car
+    answered nothing -- a result that reads far too much like a clean car.
+    """
+
+    def test_it_says_there_is_no_bus_when_the_vehicle_is_simulated(self, scanned) -> None:
+        """Otherwise somebody trying the demo is sent to check wiring that does not exist."""
+        client, _ = scanned
+        health = client.get("/api/preflight").json()
+        assert health["verdict"] == "simulated"
+        assert health["advice"] == []
+
+    def test_it_is_a_get_so_the_write_firewall_stays_intact(self, scanned) -> None:
+        """It also genuinely sends nothing, so a GET is honest rather than a workaround."""
+        client, _ = scanned
+        assert client.post("/api/preflight").status_code in (404, 405)
+
+    def test_it_refuses_while_the_interface_is_claimed(self, client: TestClient) -> None:
+        client.post("/api/scans", json={})
+        for _ in range(40):
+            response = client.get("/api/preflight")
+            if response.status_code == 409:
+                return
+        pytest.skip("the scan finished before the interface state could be observed")
+
+
 class TestLiveValues:
     def test_streams_samples(self, client: TestClient) -> None:
         with client.websocket_connect("/ws/live") as socket:

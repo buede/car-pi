@@ -7,9 +7,69 @@ import pytest
 from carpi.core.protocol.dtc import (
     DtcCountMismatch,
     decode_dtc,
+    describe_dtc,
     encode_dtc,
     parse_dtc_response,
 )
+
+
+class TestDescribe:
+    """What the standard fixes about a code, for a reader with no internet.
+
+    Deliberately shallow. A per-code fault description that is wrong does not fail
+    loudly -- it sends somebody to replace the wrong part -- so nothing here goes beyond
+    what J2012 actually promises.
+    """
+
+    @pytest.mark.parametrize(
+        ("code", "expected"),
+        [
+            ("P0420", "auxiliary emission controls"),
+            ("P0730", "transmission"),
+            ("P0301", "ignition system or misfire"),
+            ("P0A80", "hybrid propulsion"),
+        ],
+    )
+    def test_standardised_powertrain_codes_name_their_subsystem(
+        self, code: str, expected: str
+    ) -> None:
+        meaning = describe_dtc(code)
+        assert meaning is not None
+        assert meaning.subsystem == expected
+        assert meaning.standardised is True
+
+    @pytest.mark.parametrize(
+        ("code", "letter"),
+        [("P0420", "powertrain"), ("C0035", "chassis"), ("B0092", "body"), ("U0100", "network")],
+    )
+    def test_the_letter_names_the_part_of_the_car(self, code: str, letter: str) -> None:
+        meaning = describe_dtc(code)
+        assert meaning is not None
+        assert meaning.system.startswith(letter)
+
+    @pytest.mark.parametrize("code", ["P1234", "P3000", "B1001", "U1012"])
+    def test_manufacturer_codes_say_so_and_claim_no_subsystem(self, code: str) -> None:
+        """The subsystem allocation binds only the codes makers must use identically.
+
+        Reading it off a manufacturer-specific code would invent a meaning the standard
+        does not give it -- and P1xxx means different faults on different makes.
+        """
+        meaning = describe_dtc(code)
+        assert meaning is not None
+        assert meaning.standardised is False
+        assert meaning.subsystem is None
+        assert "manufacturer-specific" in meaning.summary
+
+    def test_a_uds_failure_type_suffix_is_tolerated(self) -> None:
+        """UDS codes arrive as "P0420-08"; the suffix is a failure type, not a digit."""
+        meaning = describe_dtc("P0420-08")
+        assert meaning is not None
+        assert meaning.code == "P0420"
+
+    @pytest.mark.parametrize("code", ["", "nonsense", "X0420", "P042", "P0420X", "P4420"])
+    def test_a_malformed_code_describes_nothing(self, code: str) -> None:
+        """Better to show the bare code than to invent a reading of it."""
+        assert describe_dtc(code) is None
 
 
 class TestDecode:

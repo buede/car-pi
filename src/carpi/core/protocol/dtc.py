@@ -13,9 +13,50 @@ So ``0x0143`` is ``P0143``. The all-zero value is padding, not a fault code.
 
 from __future__ import annotations
 
-__all__ = ["DtcCountMismatch", "decode_dtc", "encode_dtc", "parse_dtc_response"]
+from dataclasses import dataclass
+
+__all__ = [
+    "DtcCountMismatch",
+    "DtcMeaning",
+    "decode_dtc",
+    "describe_dtc",
+    "encode_dtc",
+    "parse_dtc_response",
+]
 
 _LETTERS = "PCBU"
+
+_SYSTEMS = {
+    "P": "powertrain -- engine, transmission and emissions",
+    "C": "chassis -- braking, steering and suspension",
+    "B": "body -- interior and comfort electronics",
+    "U": "network -- modules not talking to each other properly",
+}
+
+# Second character. J2012 splits the code space between codes every manufacturer must
+# use identically and codes each manufacturer defines for itself. Which one a code is
+# decides whether a generic description can exist for it at all, so it is the single most
+# useful thing to be able to tell somebody about an unfamiliar code.
+_STANDARDISED = {0: True, 1: False, 2: True, 3: False}
+
+# Third character, for powertrain codes only. From the J2012 subsystem allocation. Broad
+# on purpose: this says which part of the car to look at, and nothing more precise than
+# the standard actually promises.
+_P_SUBSYSTEMS = {
+    "0": "fuel and air metering, plus auxiliary emission controls",
+    "1": "fuel and air metering",
+    "2": "fuel and air metering -- injector circuit",
+    "3": "ignition system or misfire",
+    "4": "auxiliary emission controls",
+    "5": "vehicle speed control, idle control and auxiliary inputs",
+    "6": "computer output circuits",
+    "7": "transmission",
+    "8": "transmission",
+    "9": "transmission or control module",
+    "A": "hybrid propulsion",
+    "B": "hybrid propulsion",
+    "C": "hybrid propulsion",
+}
 
 
 class DtcCountMismatch(ValueError):
@@ -61,6 +102,71 @@ def encode_dtc(code: str) -> tuple[int, int]:
         raise ValueError(f"DTC first digit must be 0-3, got {code!r}")
     high = (_LETTERS.index(letter) << 6) | (d1 << 4) | d2
     return high, (d3 << 4) | d4
+
+
+@dataclass(frozen=True)
+class DtcMeaning:
+    """What the structure of a code says, without looking anything up.
+
+    This is not a fault description. It is the part of a code's meaning that SAE J2012
+    fixes in the standard, which is available for every code including ones nobody has a
+    description for. For somebody holding a code they have never seen, the useful facts
+    are which part of the car it concerns and whether a generic description can exist for
+    it at all -- and both are readable straight off the characters.
+
+    No guessing happens here. A code whose exact meaning is manufacturer-defined says so,
+    rather than being given a plausible generic description that would belong to a
+    different fault on a different make.
+    """
+
+    code: str
+    system: str
+    standardised: bool
+    subsystem: str | None = None
+
+    @property
+    def summary(self) -> str:
+        parts = [self.system]
+        if self.subsystem:
+            parts.append(self.subsystem)
+        if not self.standardised:
+            parts.append(
+                "manufacturer-specific, so its exact meaning varies by make and a "
+                "generic code list will not have it"
+            )
+        return "; ".join(parts)
+
+
+def describe_dtc(code: str) -> DtcMeaning | None:
+    """Interpret a code's structure. ``None`` if it is not a well-formed DTC.
+
+    Deliberately shallow. Anything beyond this needs a per-code description, and a wrong
+    one of those does not fail loudly -- it sends somebody to replace the wrong part.
+    """
+    text = code.strip().upper()
+    # Codes may arrive with a UDS failure-type byte appended, as in "P0420-08".
+    text = text.split("-", 1)[0]
+    if len(text) != 5 or text[0] not in _LETTERS:
+        return None
+    try:
+        first = int(text[1], 16)
+        int(text[2:], 16)
+    except ValueError:
+        return None
+    if first not in _STANDARDISED:
+        return None
+
+    standardised = _STANDARDISED[first]
+    # The subsystem allocation binds manufacturers only for the codes they are required to
+    # use identically. Reading it off a manufacturer-specific code would be inventing a
+    # meaning the standard does not give it, so those report the system and nothing more.
+    subsystem = _P_SUBSYSTEMS.get(text[2]) if text[0] == "P" and standardised else None
+    return DtcMeaning(
+        code=text,
+        system=_SYSTEMS[text[0]],
+        standardised=standardised,
+        subsystem=subsystem,
+    )
 
 
 def parse_dtc_response(payload: bytes) -> list[str]:

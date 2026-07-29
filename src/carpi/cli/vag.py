@@ -351,7 +351,17 @@ def coding_plan(
 @click.option("--module", "module_ref", required=True)
 @click.option("--identifier", default="0x00", show_default=True)
 @click.option("--value", required=True, help="New value in hex.")
-@click.option("--login", type=int, required=True, help="Login code for this module.")
+@click.option(
+    "--login",
+    type=int,
+    prompt="Module login code",
+    hide_input=True,
+    # A login code is the secret that permits writing to this car. Passed as an option it
+    # is recorded in shell history and visible in `ps` to anyone else on the machine, and
+    # it is also archived into the restore point -- which is why that file is owner-only.
+    # Omitting it prompts instead, and the prompt does not echo.
+    help="Login code for this module. Omit to be prompted, keeping it out of shell history.",
+)
 @click.option("--voltage", type=float, default=None)
 @click.option(
     "--confirm",

@@ -37,6 +37,7 @@ from typing import Any
 
 from carpi.coding.session import CodingSession
 from carpi.core.protocol.kwp2000 import KwpError, KwpNegativeResponse
+from carpi.core.storage import write_private
 from carpi.core.transport.tp20 import SAFETY_CRITICAL_MODULES, VAG_MODULES
 
 __all__ = [
@@ -121,9 +122,12 @@ class RestorePoint:
         """
         target_dir = directory or restore_directory()
         try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-            path = target_dir / self.filename()
-            path.write_text(json.dumps(self.as_dict(), indent=2) + "\n", encoding="utf-8")
+            # Owner-only: this file holds the VIN and the module's login code, which is the
+            # secret that permits writing to that car. The default umask would leave it
+            # readable by every account on the machine.
+            path = write_private(
+                target_dir / self.filename(), json.dumps(self.as_dict(), indent=2) + "\n"
+            )
         except OSError as exc:
             raise CodingRefused(
                 f"could not write a restore point to {target_dir}: {exc}. Nothing was "

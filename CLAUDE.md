@@ -29,7 +29,7 @@ subcommands are listed in `CONTRIBUTING.md`; the ones that matter most:
 With a local venv, run pytest directly:
 
 ```bash
-pytest                                              # 550 tests, ~90s
+pytest                                              # ~670 tests, ~130s
 pytest tests/test_rules.py::TestSkippedNotPassed    # one class
 pytest -k odometer                                  # by keyword
 pytest -m socketcan                                 # needs CARPI_TEST_SOCKETCAN=vcan0
@@ -120,6 +120,37 @@ nor rules may reach `eval`. Every addition here widens what an untrusted file ca
 **refuses rather than queues**, because two callers sharing a channel would each decode the
 other's replies — silent corruption, not an error.
 
+**Vehicle data on disk is owner-only.** Everything written that contains vehicle content goes
+through `write_private()` in `core/storage.py` — reports, identifier sweeps, and coding restore
+points — landing as `0600` in a `0700` directory. The mode is applied as the file is created,
+not afterwards, so there is no window in which the content exists world-readable, and it is
+re-applied to the descriptor because a pre-existing file keeps its old mode. A restore point is
+the most sensitive file car-pi writes: it holds the VIN *and* the module's login code, which is
+the secret that permits writing to that car. `coding/` may import `core/`; the firewall only
+runs the other way, so this helper is reachable from all three writers.
+
+Defaults never point at the working directory. `carpi guide` suggests
+`~/.carpi/scans/carpi-scan-<platform>.json`, because a bare filename lands in whatever
+directory the terminal is in — which for anybody working on car-pi is a checkout, and then a
+real VIN is one `git add -A` from being published. `.gitignore` covers the suggested names as a
+backstop, not as the protection.
+
+The login code is promptable (`hide_input`) rather than only an option, because an option is
+recorded in shell history and visible in `ps` to every other account on the machine.
+
+**A contribution carries shapes, never contents.** `core/candidates.py` reduces scans and
+sweeps for sharing by keeping which identifiers exist, their length and type, the module
+addresses, and the first 8 VIN characters — and **dropping every value**. Values are dropped
+rather than scrubbed on purpose: removing a VIN still leaves the part numbers, serial numbers
+and programming dates, and those together identify one car. Dropping contents needs no
+judgement about which values happen to be sensitive.
+
+`_reject_leaks()` re-checks the result against every value-bearing field of the sources and
+raises `LeakedValue` rather than returning, because this is the last step before a file is
+offered for upload under CC-BY-SA-4.0 and that licence cannot be withdrawn. Adding a new
+value-bearing field to a report means adding it to `_VALUE_BEARING`. Nothing uploads
+automatically; `defs contribute` writes a file and prints a prefilled issue URL.
+
 ## YAGNI — keep features and files to a minimum
 
 Build what is needed now, not what might be needed later. This is not aspirational here; the
@@ -164,7 +195,8 @@ These break without touching the file you edited.
 
 Versioned JSON schema strings, bumped rather than silently changed: `carpi.inspection/1`
 (report), `carpi.didscan/1`, `carpi.discovery/1`, `carpi.vagscan/1`, `carpi.bench/1`,
-`carpi.restore/1`.
+`carpi.restore/1`, `carpi.candidates/1` (`defs compare`), `carpi.observation/1`
+(`defs contribute`).
 
 ## Documentation
 
@@ -189,7 +221,31 @@ non-obvious line has no "why", it is incomplete.
 
 ## Known unfinished edge
 
-`Database.profile_for_vin()` and `VehicleProfile.matches_vin()` are implemented and tested,
-but called only from `tests/test_vehicles.py` — never from `scan_vehicle` or the CLI. So
-automatic VIN-based profile selection does **not** happen, despite `--profile`'s help text
-saying "Omit to select one by VIN". Wiring it up is a real task, not a cleanup.
+**KWP2000 over TP2.0 and the whole coding path have never run on a real vehicle**, and
+neither have the Pi deploy scripts. Both sides of TP2.0 were written from the same
+specification, so the tests prove internal consistency and nothing about what a car does.
+`cli/bench.py` exists to close that gap on a two-node bench and has itself never run on
+hardware. Say so wherever it comes up rather than quietly implying otherwise.
+
+The UDS read-only surface is `0x10`, `0x19` (sub-functions `0x01` and `0x02` only), `0x22`
+and `0x3E`. Four more reads are absent for no safety reason, but they are not equally worth
+adding, and the difference is which parts of them the standard actually defines:
+
+- **`0x24` ReadScalingDataByIdentifier is the valuable one.** Its scaling-byte encodings
+  *are* standardised (ISO 14229-1 Annex C: unsigned, signed, BCD, ASCII, bit-mapped,
+  formula, unit and format). So it is the one service that lets a module state a data
+  identifier's own length, type and scaling — turning a sweep into a definition without
+  guesswork. This is the next real capability win.
+- **`0x19` sub-functions `0x04` (snapshot records) and `0x06` (extended data) standardise
+  only the framing.** Record contents are vehicle-manufacturer specific, so what comes back
+  is raw bytes. Worth having for building definitions; **do not report them as occurrence
+  or aging counters**, however tempting — that number is not promised by any standard and a
+  confidently wrong one is exactly what this project refuses elsewhere.
+- **`0x19` sub-function `0x0A`** lists the module's supported DTCs, which is genuinely
+  useful: it tells the tool what it did *not* find.
+
+Adding any of them means also teaching `sim/` to answer it — independently, per the
+invariant above.
+
+Mode 02 freeze frames read **frame 0 only** (`core/scan.py`), so additional stored frames
+are silently ignored.

@@ -170,6 +170,51 @@ class TestSkippedNotPassed:
         assert len(evaluation.skipped) == len(database.rules)
 
 
+def _bare_scan():
+    """A scan that reached no module, so the rendering under test is the evaluation."""
+    from carpi.core.scan import ScanResult
+
+    return ScanResult(
+        started_at="2026-07-29T10:00:00", finished_at="2026-07-29T10:00:20", transport="virtual"
+    )
+
+
+class TestABrokenRuleIsNotSilent:
+    """A rule that raises is in none of the three counts, so it must have its own section.
+
+    Without one it simply disappears: not failed, not passed, and not even reported as
+    unassessable. That is the same failure the whole engine exists to prevent, arriving
+    through a bug in a definition file rather than through a quiet vehicle.
+    """
+
+    def test_the_error_reaches_the_text_report(self) -> None:
+        from carpi.core.rules import Evaluation
+        from carpi.report.text import render_text
+
+        evaluation = Evaluation(errors=(("odometer-disagrees-with-advertised", "boom"),))
+        rendered = render_text(_bare_scan(), evaluation)
+
+        assert "could not be evaluated" in rendered
+        assert "odometer-disagrees-with-advertised" in rendered
+        assert "boom" in rendered
+
+    def test_the_error_reaches_the_json_report(self) -> None:
+        from carpi.core.rules import Evaluation
+        from carpi.report.text import to_dict
+
+        evaluation = Evaluation(errors=(("some-rule", "boom"),))
+        payload = to_dict(_bare_scan(), evaluation)
+
+        assert payload["rule_errors"] == [{"rule_id": "some-rule", "error": "boom"}]
+
+    def test_a_broken_rule_is_never_counted_as_passed(self) -> None:
+        from carpi.core.rules import Evaluation
+
+        evaluation = Evaluation(errors=(("some-rule", "boom"),))
+        assert evaluation.passed == ()
+        assert evaluation.findings == ()
+
+
 class TestEveryRuleIsExercised:
     def test_no_rule_is_left_untested(self, database: Database) -> None:
         """Adding a rule without coverage fails here.

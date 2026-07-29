@@ -184,6 +184,12 @@ class ModuleReading:
         return {
             "ecu": self.ecu.name,
             "address": self.ecu.address.label,
+            # The pair as well as the label, because `EcuAddress.label` returns the module's
+            # name when it has one -- so a named module would otherwise leave the report with
+            # no record of where it actually lives, which is the one thing another person
+            # needs in order to reach it on their own car.
+            "request_id": f"0x{self.ecu.request_id:03X}",
+            "response_id": f"0x{self.ecu.response_id:03X}",
             "reached": self.reached,
             "values": self.values,
             "raw": self.raw,

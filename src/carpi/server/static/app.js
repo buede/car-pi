@@ -42,18 +42,55 @@ function wsUrl(path) {
   return `${scheme}//${location.host}${path}`;
 }
 
+// Some decoded parameters are structures rather than numbers -- monitor status carries a
+// nested map of every emissions self-test. Those are shown as compact JSON rather than as
+// "[object Object]", which is what String() would produce.
+function fmtValue(value) {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  return fmt(value);
+}
+
+// Timestamps arrive as ISO-8601. A report is read by somebody deciding whether to buy a
+// car, not by a machine, so it gets their locale's rendering rather than the wire format.
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const when = new Date(iso);
+  return Number.isNaN(when.getTime()) ? iso : when.toLocaleString();
+}
+
 // --- tabs --------------------------------------------------------------------
 
-for (const tab of document.querySelectorAll('.tab')) {
-  tab.addEventListener('click', () => {
-    for (const other of document.querySelectorAll('.tab')) {
-      const active = other === tab;
-      other.classList.toggle('active', active);
-      other.setAttribute('aria-selected', String(active));
-    }
-    for (const view of document.querySelectorAll('.view')) {
-      view.classList.toggle('active', view.id === `view-${tab.dataset.view}`);
-    }
+const TABS = [...document.querySelectorAll('.tab')];
+
+function activate(tab) {
+  for (const other of TABS) {
+    const active = other === tab;
+    other.classList.toggle('active', active);
+    other.setAttribute('aria-selected', String(active));
+    // Only the selected tab stays in the tab order; arrow keys move between them. That is
+    // the ARIA tabs pattern, and it means a keyboard user does not have to step through
+    // three tabs to reach the panel.
+    other.setAttribute('tabindex', active ? '0' : '-1');
+  }
+  for (const view of document.querySelectorAll('.view')) {
+    view.classList.toggle('active', view.id === `view-${tab.dataset.view}`);
+  }
+  // History is fetched on arrival. Landing on a Refresh button above blank space reads as
+  // "no scans" when the truth is "not asked yet".
+  if (tab.dataset.view === 'history') loadHistory();
+}
+
+for (const [index, tab] of TABS.entries()) {
+  tab.addEventListener('click', () => activate(tab));
+  tab.addEventListener('keydown', (event) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = TABS[(index + step + TABS.length) % TABS.length];
+    next.focus();
+    activate(next);
   });
 }
 
@@ -68,8 +105,123 @@ async function loadHealth() {
       ? `simulated: ${health.interface.replace(/^simulated vehicle /, '')}`
       : health.interface;
     chip.classList.toggle('simulated', Boolean(health.simulated));
+    reflectBusy(health);
   } catch {
     $('interface').textContent = 'offline';
+    // Health is unreachable, so we cannot know whether the bus is claimed. Leave the button
+    // usable: refusing to let someone try, on a guess, is worse than letting them see the
+    // real error. Never strand the button disabled on a failed poll.
+    if (!scanning) $('start').disabled = false;
+  }
+}
+
+// The unit refuses a second conversation rather than queueing it, so a busy interface is a
+// normal state rather than an error. Saying so before the tap is better than letting the
+// user press a button that looks ready and collect an HTTP 409.
+function reflectBusy(health) {
+  if (scanning) return; // our own scan; the click handler owns the button
+  const status = $('bus-status');
+  const other = health.busy ? health.activity : null;
+  $('start').disabled = Boolean(other);
+  status.textContent = other
+    ? `The interface is busy with ${other.kind === 'live' ? 'live values' : 'an inspection'}.` +
+      ' One conversation at a time — wait for it to finish.'
+    : '';
+}
+
+// --- first run, and the bus check -------------------------------------------
+
+const SEEN_KEY = 'carpi.notice.v1';
+
+function showFirstRunNotice() {
+  let seen = false;
+  // Private browsing rejects localStorage writes. Showing the notice again is a far better
+  // failure than throwing during boot and leaving the page half-initialised.
+  try {
+    seen = localStorage.getItem(SEEN_KEY) === '1';
+  } catch {
+    seen = false;
+  }
+  if (seen) return;
+
+  $('first-run').hidden = false;
+  $('first-run-ok').addEventListener('click', () => {
+    $('first-run').hidden = true;
+    try {
+      localStorage.setItem(SEEN_KEY, '1');
+    } catch {
+      /* nothing to do; the notice simply appears again next time */
+    }
+  });
+}
+
+$('preflight').addEventListener('click', async () => {
+  const target = $('preflight-result');
+  const button = $('preflight');
+  button.disabled = true;
+  target.textContent = 'Listening for a few seconds. Nothing is being sent…';
+  target.className = 'hint';
+
+  try {
+    const response = await fetch('api/preflight');
+    if (response.status === 409) {
+      target.textContent = 'The interface is busy. Wait for the running job to finish.';
+      return;
+    }
+    const health = await response.json();
+    // Advice is rendered as its own lines rather than one sentence: these are alternative
+    // causes to work through in order, not a paragraph.
+    clear(target);
+    target.className = health.verdict === 'healthy' ? 'hint' : 'hint caution';
+    target.appendChild(el('span', { text: verdictLine(health) }));
+    if (health.advice.length) {
+      target.appendChild(
+        el('ul', { class: 'log' }, health.advice.map((line) => el('li', { text: line }))),
+      );
+    }
+  } catch (err) {
+    target.textContent = `Could not reach the unit: ${err.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function verdictLine(health) {
+  if (health.verdict === 'simulated') {
+    return `There is no bus to check — ${health.summary}.`;
+  }
+  if (health.verdict === 'healthy') {
+    return `The bus is alive and error-free — ${health.summary}. Safe to scan.`;
+  }
+  if (health.verdict === 'errors') {
+    return `The bus is reporting errors — ${health.summary}. Do not scan yet.`;
+  }
+  if (health.verdict === 'silent') {
+    return `Nothing heard — ${health.summary}. A scan now would report that the car ` +
+      'answered nothing, which is not the same as a clean car.';
+  }
+  return health.summary;
+}
+
+// --- what will be checked ----------------------------------------------------
+
+async function loadRules() {
+  const target = $('rules');
+  try {
+    const { rules } = await (await fetch('api/defs/rules')).json();
+    clear(target);
+    for (const rule of rules) {
+      const row = el('div', { class: 'rule' }, [
+        el('span', { class: 'severity', text: rule.severity }),
+        el('span', { text: rule.title }),
+      ]);
+      if (rule.confidence && rule.confidence !== 'official') {
+        row.appendChild(el('span', { class: 'hint', text: ` (${rule.confidence})` }));
+      }
+      target.appendChild(row);
+    }
+  } catch {
+    target.textContent = 'Could not load the list of checks.';
   }
 }
 
@@ -112,8 +264,10 @@ $('start').addEventListener('click', async () => {
     showError(`Could not reach the unit: ${err.message}`);
   } finally {
     scanning = false;
-    $('start').disabled = false;
     $('progress').hidden = true;
+    // Re-read health rather than assuming the button is usable again: another client may
+    // have claimed the interface while this scan was running.
+    loadHealth();
   }
 });
 
@@ -140,8 +294,12 @@ function followScan(id) {
       if (message.type === 'progress') addEvent(message.message);
       else if (message.type === 'error') showError(message.message);
       else if (message.type === 'finished') {
-        loadReport(id, message.summary);
-        socket.close();
+        // Awaited before resolving, so the spinner does not disappear while the report is
+        // still on its way and leave the screen briefly blank.
+        loadReport(id, message.summary).then(() => {
+          socket.close();
+          finish();
+        });
       }
     };
 
@@ -154,13 +312,35 @@ function followScan(id) {
   });
 }
 
+// The fallback when the socket will not open -- a locked phone, a dropped hotspot. It reads
+// the events endpoint rather than only the summary, so progress still appears: a spinner
+// with no lines under it is indistinguishable from a hang.
 async function pollScan(id) {
+  let index = 0;
+  let failures = 0;
+
   for (;;) {
-    const response = await fetch(`api/scans/${id}`);
-    const summary = await response.json();
-    if (summary.state === 'done' || summary.state === 'failed') {
-      loadReport(id, summary);
-      return;
+    try {
+      const response = await fetch(`api/scans/${id}/events?since=${index}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const { index: next, events, state } = await response.json();
+      index = next;
+      for (const message of events) addEvent(message);
+      failures = 0;
+
+      if (state === 'done' || state === 'failed') {
+        const summary = await (await fetch(`api/scans/${id}`)).json();
+        await loadReport(id, summary);
+        return;
+      }
+    } catch (err) {
+      // A scan runs for minutes on a hotspot that comes and goes, so one failed request is
+      // not a reason to abandon a scan that is still running on the unit. Several in a row
+      // is, because then there is nothing to report progress from.
+      if (++failures >= 10) {
+        showError(`Lost contact with the unit while scanning: ${err.message}`);
+        return;
+      }
     }
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -199,10 +379,21 @@ function renderReport(report, id) {
   for (const finding of report.findings) target.appendChild(findingCard(finding));
 
   if (report.findings.length === 0) {
+    const skipped = report.not_assessed.filter((entry) => entry.missing.length > 0).length;
     target.appendChild(
       el('div', { class: 'card' }, [
         el('h2', { text: 'No findings' }),
         el('p', { text: 'Every check that could be run came back clean.' }),
+        // The heading alone would read as a verdict on the car. It is only a verdict on the
+        // checks that ran, and when some did not, that distinction is the whole report.
+        skipped
+          ? el('p', {
+              class: 'hint',
+              text:
+                `${skipped} check${skipped === 1 ? '' : 's'} could not be run at all. ` +
+                'Read the "Not assessed" section below before treating this as a clean car.',
+            })
+          : null,
       ]),
     );
   }
@@ -210,9 +401,176 @@ function renderReport(report, id) {
   const unassessed = report.not_assessed.filter((entry) => entry.missing.length > 0);
   if (unassessed.length) target.appendChild(unassessedBlock(unassessed));
 
+  const broken = report.rule_errors || [];
+  if (broken.length) target.appendChild(ruleErrorsBlock(broken));
+
   target.appendChild(codesBlock(report));
   const monitors = monitorsBlock(report);
   if (monitors) target.appendChild(monitors);
+  target.appendChild(detailsBlock(report));
+}
+
+// Everything the report carries and the summary above does not show. Collapsed, so the
+// simple path stays simple, but present -- until now the only way to see a module's raw
+// bytes or its Mode 06 numbers was to download the JSON and open it somewhere else, on a
+// phone, on a hotspot with no internet. The data was already here.
+function detailsBlock(report) {
+  const sections = [];
+
+  const odometers = Object.entries(report.odometer_by_module || {});
+  if (odometers.length) {
+    sections.push(
+      detail(
+        `Odometer by module (${odometers.length})`,
+        keyValues(odometers.map(([name, km]) => [name, `${fmt(km)} km`])),
+      ),
+    );
+  }
+
+  for (const ecu of report.ecus || []) {
+    const name = ecu.ecu_name || ecu.address.label;
+    const rows = [];
+    const readings = Object.entries(ecu.readings || {});
+
+    if (readings.length) {
+      // Raw bytes are what makes a scan re-checkable after a definition is corrected, and
+      // what somebody else needs to verify a finding rather than take it on trust.
+      rows.push(el('h4', { text: 'Live parameters' }));
+      rows.push(
+        keyValues(
+          readings.map(([key, r]) => [
+            r.label || key,
+            `${fmtValue(r.value)}${r.unit ? ' ' + r.unit : ''}` +
+              `${r.raw ? '   [' + r.raw + ']' : ''}` +
+              `${r.plausible === false ? '   implausible, so omitted from the facts' : ''}`,
+          ]),
+        ),
+      );
+    }
+
+    if (ecu.monitor_tests?.length) {
+      rows.push(el('h4', { text: 'Self-test results (Mode 06)' }));
+      rows.push(
+        el('p', {
+          class: 'hint',
+          text:
+            'Raw counts, not engineering units. The unit-and-scaling table is not shipped, ' +
+            'so these are not given units they might not have. Pass and margin are exact ' +
+            'regardless, because the module supplies its own limits.',
+        }),
+      );
+      rows.push(
+        keyValues(
+          ecu.monitor_tests.map((t) => [
+            `monitor 0x${t.monitor_id.toString(16).toUpperCase()} test ${t.test_id}`,
+            `${t.value} (min ${t.minimum}, max ${t.maximum}) — ${t.passed ? 'pass' : 'FAIL'}`,
+          ]),
+        ),
+      );
+    }
+
+    const freeze = Object.entries(ecu.freeze_frame || {});
+    if (freeze.length) {
+      rows.push(el('h4', { text: 'Freeze frame' }));
+      rows.push(el('p', { class: 'hint', text: 'Conditions recorded when a fault was stored.' }));
+      rows.push(
+        keyValues(freeze.map(([key, r]) => [key, `${fmtValue(r.value)}   [${r.raw}]`])),
+      );
+    }
+
+    const identity = [
+      ['Address', ecu.address.label],
+      ['VIN (OBD-II)', ecu.vin],
+      ['VIN (UDS)', ecu.uds_vin],
+      ['Calibration IDs', ecu.calibration_ids?.join(', ')],
+      ['Calibration verification', ecu.calibration_verification_numbers?.join(', ')],
+      ['Supported parameters', ecu.supported_pids?.length],
+      ['Did not support', ecu.unsupported?.join(', ')],
+    ].filter(([, value]) => value !== null && value !== undefined && value !== '');
+    if (identity.length) {
+      rows.push(el('h4', { text: 'Module identity' }));
+      rows.push(keyValues(identity));
+    }
+
+    if (ecu.errors?.length) {
+      rows.push(el('h4', { text: 'Requests that failed' }));
+      rows.push(el('ul', { class: 'log' }, ecu.errors.map((e) => el('li', { text: e }))));
+    }
+
+    if (rows.length) sections.push(detail(name, el('div', {}, rows)));
+  }
+
+  for (const module of report.module_readings || []) {
+    const rows = Object.entries(module.values || {}).map(([key, value]) => [
+      key,
+      `${fmtValue(value)}${module.raw?.[key] ? '   [' + module.raw[key] + ']' : ''}`,
+    ]);
+    for (const key of module.unavailable || []) rows.push([key, 'the module did not answer']);
+    // A locked identifier is a positive finding: something is there. Saying "no answer"
+    // would throw that away.
+    for (const key of module.protected || []) {
+      rows.push([key, 'exists, but locked behind a login']);
+    }
+    for (const key of module.implausible || []) {
+      rows.push([key, 'answered, but the value was out of range, so it was omitted']);
+    }
+    if (rows.length) {
+      sections.push(detail(`${module.ecu} (manufacturer data)`, keyValues(rows)));
+    }
+  }
+
+  if (report.scan?.notes?.length) {
+    sections.push(
+      detail(
+        'Notes from the scan',
+        el('ul', { class: 'log' }, report.scan.notes.map((n) => el('li', { text: n }))),
+      ),
+    );
+  }
+
+  const meta = [
+    ['Started', fmtTime(report.scan?.started_at)],
+    ['Finished', fmtTime(report.scan?.finished_at)],
+    ['Transport', report.scan?.transport],
+    ['Vehicle profile', report.scan?.profile_label || report.scan?.profile_id || 'none used'],
+    ['Checks passed', (report.passed || []).join(', ') || 'none'],
+    ['Schema', report.schema],
+  ].filter(([, value]) => value !== undefined && value !== null);
+  sections.push(detail('Scan details', keyValues(meta)));
+
+  return el('div', { class: 'card' }, [
+    el('h2', { text: 'Everything else' }),
+    el('p', {
+      class: 'hint',
+      text:
+        'The full data behind the report above, including raw bytes. Nothing here is ' +
+        'interpreted for you.',
+    }),
+    ...sections,
+  ]);
+}
+
+function detail(summary, body) {
+  const node = el('details', {}, [el('summary', { text: summary }), body]);
+  return node;
+}
+
+function keyValues(pairs) {
+  return el('div', { class: 'scroll-x' }, [
+    el(
+      'table',
+      {},
+      [
+        el(
+          'tbody',
+          {},
+          pairs.map(([key, value]) =>
+            el('tr', {}, [el('th', { text: String(key) }), el('td', { text: String(value) })]),
+          ),
+        ),
+      ],
+    ),
+  ]);
 }
 
 function verdictBlock(report) {
@@ -254,7 +612,7 @@ function headerBlock(report, id) {
   const rows = [
     ['VIN', report.scan.vin || 'not reported'],
     ['Modules', String(report.ecus.length)],
-    ['Scanned', report.scan.started_at],
+    ['Scanned', fmtTime(report.scan.started_at)],
   ];
   if (report.scan.claimed_odometer_km !== null) {
     rows.push(['Advertised', `${fmt(report.scan.claimed_odometer_km)} km`]);
@@ -331,6 +689,25 @@ function unassessedBlock(entries) {
   ]);
 }
 
+// A rule that threw is counted as neither passed, failed, nor not-assessed -- it simply
+// vanishes. That is the one remaining way silence could read as a clean bill of health, so
+// it is shown as a defect in car-pi rather than a fact about the car.
+function ruleErrorsBlock(errors) {
+  return el('div', { class: 'card error' }, [
+    el('h2', { text: 'Checks that could not be evaluated' }),
+    el('p', {
+      text:
+        'These checks failed to run because of a fault in car-pi itself, not in the ' +
+        'vehicle. They are not counted anywhere above. Please report them.',
+    }),
+    el(
+      'ul',
+      { class: 'log' },
+      errors.map((entry) => el('li', { text: `${entry.rule_id} — ${entry.error}` })),
+    ),
+  ]);
+}
+
 function codesBlock(report) {
   const children = [el('h2', { text: 'Fault codes' })];
   let any = false;
@@ -356,7 +733,29 @@ function codesBlock(report) {
     }
   }
 
-  if (!any) children.push(el('p', { text: 'None reported by any module.' }));
+  if (!any) {
+    children.push(el('p', { text: 'None reported by any module.' }));
+    return el('div', { class: 'card' }, children);
+  }
+
+  // A bare "P0420" sends the reader to a search engine, and there is no internet on the
+  // unit's own hotspot. This is what SAE J2012 fixes about each code: which part of the
+  // car, and whether a generic description can exist for it at all.
+  const meanings = {};
+  for (const ecu of report.ecus) Object.assign(meanings, ecu.dtcs.meanings || {});
+  const codes = Object.keys(meanings).sort();
+  if (codes.length) {
+    children.push(el('h3', { text: 'What these codes are about' }));
+    for (const code of codes) {
+      children.push(
+        el('div', { class: 'rule' }, [
+          el('span', { class: 'codes', text: code }),
+          el('span', { class: 'hint', text: meanings[code].summary }),
+        ]),
+      );
+    }
+  }
+
   return el('div', { class: 'card' }, children);
 }
 
@@ -467,13 +866,28 @@ async function loadHistory() {
   }
 
   for (const scan of scans) {
-    const worst = scan.worst_severity ? `worst: ${scan.worst_severity}` : 'no findings';
+    // "no findings" on its own would describe a car nothing could be asked about exactly
+    // as it describes a clean one. The skipped count travels with the verdict everywhere,
+    // so a history entry cannot imply a pass the scan never established.
+    const skipped = scan.not_assessed_count || 0;
+    const worst = scan.worst_severity
+      ? `worst: ${scan.worst_severity}`
+      : skipped
+        ? 'nothing found'
+        : 'no findings';
+
+    const summary = el('p', { class: 'hint' }, [
+      el('span', { text: `${scan.state} · ${scan.vin || 'no VIN'} · ${worst}` }),
+    ]);
+    if (skipped) {
+      summary.appendChild(
+        el('span', { class: 'skipped-note', text: ` · ${skipped} not assessed` }),
+      );
+    }
+
     const card = el('div', { class: 'card' }, [
-      el('h3', { text: scan.created_at }),
-      el('p', {
-        class: 'hint',
-        text: `${scan.state} · ${scan.vin || 'no VIN'} · ${worst}`,
-      }),
+      el('h3', { text: fmtTime(scan.created_at) }),
+      summary,
     ]);
     if (scan.state === 'done') {
       const view = el('button', { text: 'View' });
@@ -489,7 +903,14 @@ async function loadHistory() {
 
 // --- boot --------------------------------------------------------------------
 
+showFirstRunNotice();
 loadHealth();
+loadHistory();
+loadRules();
+
+// The interface can be claimed by another phone on the same hotspot, or drop out entirely.
+// A header chip that was accurate once at load is not the same as an accurate one.
+setInterval(loadHealth, 5000);
 
 if ('serviceWorker' in navigator) {
   // Registration failing is not worth surfacing: it only costs offline reloads, and

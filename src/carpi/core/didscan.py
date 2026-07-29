@@ -67,6 +67,16 @@ INTERESTING_RANGES: tuple[tuple[int, int], ...] = (
 # timeouts. Distinguished from a module simply refusing, which is expected and common.
 _MAX_CONSECUTIVE_TRANSPORT_ERRORS = 25
 
+# Consecutive probes that drew no reply of any kind. Higher than the error threshold on
+# purpose, because unlike a malformed reply, silence is genuinely ambiguous: most modules
+# answer an unknown identifier with requestOutOfRange, but some just say nothing. So this
+# has to be long enough not to abandon one of those, and short enough that a bus which has
+# actually gone away does not cost the rest of the sweep.
+#
+# At the default one-second timeout this is about three minutes before giving up, against
+# the 26 minutes the default ranges would otherwise take, or 18 hours for a full sweep.
+_MAX_CONSECUTIVE_SILENT_PROBES = 200
+
 
 @dataclass(frozen=True)
 class DidObservation:
@@ -82,6 +92,20 @@ class DidObservation:
     def exists(self) -> bool:
         """Whether the module acknowledged holding something here."""
         return self.status in (STATUS_DATA, STATUS_PROTECTED)
+
+    @property
+    def answered(self) -> bool:
+        """Whether anything came back at all, regardless of what it said.
+
+        A module replying "no such identifier" is information, and proves the bus and the
+        module are both there. A timeout proves nothing whatsoever. Both land on
+        :data:`STATUS_UNSUPPORTED` because for the purpose of the report they mean the same
+        thing, but only one of them means the sweep is still worth continuing -- so the
+        difference is kept, in the presence of a negative response code.
+        """
+        if self.status == STATUS_ERROR:
+            return False
+        return self.status != STATUS_UNSUPPORTED or self.nrc is not None
 
     @property
     def standard_name(self) -> str | None:
@@ -217,6 +241,7 @@ def scan_dids(
     report = DidScanReport(module=str(client.address), ranges=tuple(ranges), vin=vin)
     total = _count(ranges) - len(skipped)
     consecutive_transport_errors = 0
+    consecutive_silence = 0
     started = time.monotonic()
 
     for index, did in enumerate(_iterate(ranges, skipped), start=1):
@@ -241,6 +266,24 @@ def scan_dids(
                 break
         else:
             consecutive_transport_errors = 0
+
+        # Silence is counted separately from errors, because a timeout arrives here as an
+        # ordinary "unsupported" observation. Counting only errors meant this guard could
+        # never fire on the case it was written for: a bus that has gone away produces
+        # timeouts, not errors, and the sweep ground through the whole range regardless.
+        if observation.answered:
+            consecutive_silence = 0
+        else:
+            consecutive_silence += 1
+            if consecutive_silence >= _MAX_CONSECUTIVE_SILENT_PROBES:
+                report.aborted = (
+                    f"{consecutive_silence} consecutive identifiers drew no reply at all. "
+                    f"Either the module has stopped answering -- check the ignition and the "
+                    f"supply voltage, since a thorough sweep outlasts a sagging battery -- or "
+                    f"it never acknowledges an unknown identifier. If the latter, narrow the "
+                    f"sweep with --ranges and try again."
+                )
+                break
 
         if observation.exists and on_progress is not None:
             on_progress(str(observation))

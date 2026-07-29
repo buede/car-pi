@@ -18,3 +18,9 @@ scans/
 *.candump
 *.asc
 *.blf
+
+# Names the tool suggests by default, in case one is written inside a checkout.
+# A backstop, not the protection: reports and sweeps default to a path under
+# ~/.carpi and are written owner-only. See carpi/core/storage.py.
+carpi-scan-*.json
+contribution-*.json
